@@ -21,10 +21,13 @@ def main() -> None:
     if missing:
         raise SystemExit(f"Missing required runtime files: {', '.join(missing)}")
 
-    from watchlist_store import init_db
-
     db = os.environ.get("WATCHLIST_DB_PATH", str(ROOT / ".ci-watchlist.sqlite3"))
     os.environ["WATCHLIST_DB_PATH"] = db
+
+    # Import only after setting WATCHLIST_DB_PATH because the store may
+    # resolve its database path during module import.
+    from watchlist_store import init_db
+
     init_db()
     print("Smoke check OK")
 
