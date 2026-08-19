@@ -9,7 +9,7 @@ from source_registry import source_status
 from source_discovery import discover_sources
 from catalog_store import init_db, search_catalog, stats as catalog_stats, upsert_products
 
-app = FastAPI(title="Marketplace Parser Feed Engine", version="0.15.0")
+app = FastAPI(title="Marketplace Parser Feed Engine", version="0.16.0")
 init_db()
 
 @app.get("/")
@@ -22,7 +22,7 @@ def health():
 
 @app.get("/api/sources")
 def sources():
-    return {"sources": list(PROVIDERS), "registry": source_status(), "mode": "public-feeds-plus-official-marketplace-apis"}
+    return {"sources": list(PROVIDERS), "registry": source_status(), "mode": "web-research-plus-public-feeds-plus-official-apis"}
 
 @app.get("/api/marketplace-adapters")
 def marketplace_adapters():
@@ -75,11 +75,17 @@ def ai_plan(q: str = Query(min_length=1, max_length=500)):
     except Exception as exc:
         raise HTTPException(503, f"AI unavailable: {exc}") from exc
 
+@app.get("/api/web-research")
+def web_research(q: str = Query(min_length=1, max_length=500), limit: int = Query(default=8, ge=1, le=20), fetch_pages: bool = Query(default=True)):
+    from agent_web_pipeline import search_web
+    return search_web(q.strip(), limit)
+
 @app.get("/api/agent/search")
 def agent_search(q: str = Query(min_length=1, max_length=500), limit: int = Query(default=20, ge=1, le=50)):
     from agent_router import build_plan, expand_queries, resolve_sources
     from deal_ranker import rank_items
     from product_matcher import group_products
+    from agent_web_pipeline import search_web_batch
 
     query_text = q.strip()
     plan = build_plan(query_text)
@@ -102,16 +108,21 @@ def agent_search(q: str = Query(min_length=1, max_length=500), limit: int = Quer
     collected: list[dict] = []
     for run in runs:
         collected.extend(run.get("items", []))
+
+    web_runs = search_web_batch(queries, limit=min(6, limit))
+    web_items = [item for run in web_runs for item in run.get("items", [])]
+    collected.extend(web_items)
+
     max_price = plan.get("max_price")
     if isinstance(max_price, (int, float)):
-        collected = [x for x in collected if isinstance(x.get("price"), (int, float)) and x["price"] <= max_price]
+        collected = [x for x in collected if x.get("discovery_only") or (isinstance(x.get("price"), (int, float)) and x["price"] <= max_price)]
 
     collected.extend(search_catalog(query_text, max(20, limit * 3), max_price if isinstance(max_price, (int, float)) else None))
     ranked = rank_items(collected, plan, max(1, limit * 3))
     groups = group_products(ranked, threshold=float(os.getenv("PRODUCT_MATCH_THRESHOLD", "0.72")))
     items = [group["best_offer"] | {"offer_count": group["offer_count"], "lowest_price": group["lowest_price"], "match_group": group["match_group"]} for group in groups[:limit]]
 
-    return {"query": query_text, "count": len(items), "items": items, "product_groups": groups[:limit], "queries": queries, "ai_plan": plan, "requested_sources": requested, "resolved_sources": sources, "agent": "multi-agent-router", "parallel": {"queries": len(queries), "sources_per_query": len(sources)}, "runs": [{"query": r.get("query"), "count": r.get("count"), "sources": r.get("sources", []), "error": r.get("error")} for r in runs], "ready": bool(items)}
+    return {"query": query_text, "count": len(items), "items": items, "product_groups": groups[:limit], "queries": queries, "ai_plan": plan, "requested_sources": requested, "resolved_sources": sources, "web_research": {"runs": len(web_runs), "items": len(web_items), "sources": sorted({str(i.get("source")) for i in web_items if i.get("source")})}, "agent": "multi-agent-router", "parallel": {"queries": len(queries), "sources_per_query": len(sources), "web_research_runs": len(web_runs)}, "runs": [{"query": r.get("query"), "count": r.get("count"), "sources": r.get("sources", []), "error": r.get("error")} for r in runs], "ready": bool(items)}
 
 @app.get("/api/search")
 def search(q: str = Query(min_length=1, max_length=300), limit: int = Query(default=20, ge=1, le=100), source: str | None = Query(default=None)):
