@@ -51,7 +51,8 @@ def verify(item_id: int) -> dict[str, Any]:
     result = verify_url(item["url"], item.get("title"), item.get("last_price"))
     current = result.get("price") if isinstance(result, dict) else None
     verified = bool(result.get("verified")) if isinstance(result, dict) else False
-    if verified and isinstance(current, (int, float)):
+    with _connect() as conn:
+        has_item_key = "item_key" in _columns(conn)
+    if verified and isinstance(current, (int, float)) and has_item_key:
         update_price(int(item["chat_id"]), str(item["item_key"]), float(current))
-        item["last_price"] = float(current)
     return {"ok": True, "item": item, "verification": result, "history": price_history(int(item["chat_id"]), str(item["item_key"]), 10)}
