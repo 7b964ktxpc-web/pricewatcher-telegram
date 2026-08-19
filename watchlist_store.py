@@ -21,6 +21,7 @@ def init_db() -> None:
     with _connect() as conn:
         conn.execute("CREATE TABLE IF NOT EXISTS watchlist (chat_id INTEGER NOT NULL, item_key TEXT NOT NULL, title TEXT NOT NULL, url TEXT, source TEXT, last_price REAL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY (chat_id, item_key))")
         conn.execute("CREATE TABLE IF NOT EXISTS watchlist_notifications (event_key TEXT PRIMARY KEY, chat_id INTEGER NOT NULL, item_key TEXT NOT NULL, price REAL NOT NULL, notified_at REAL NOT NULL)")
+        conn.execute("CREATE TABLE IF NOT EXISTS watchlist_price_history (id INTEGER PRIMARY KEY AUTOINCREMENT, chat_id INTEGER NOT NULL, item_key TEXT NOT NULL, price REAL NOT NULL, recorded_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)")
         conn.commit()
 
 
@@ -33,6 +34,8 @@ def add(chat_id: int, item: dict[str, Any]) -> None:
     price = item.get("price", item.get("lowest_price"))
     with _connect() as conn:
         conn.execute("INSERT INTO watchlist(chat_id,item_key,title,url,source,last_price) VALUES(?,?,?,?,?,?) ON CONFLICT(chat_id,item_key) DO UPDATE SET title=excluded.title,url=excluded.url,source=excluded.source,last_price=excluded.last_price,updated_at=CURRENT_TIMESTAMP", (chat_id, key, title, url, source, price if isinstance(price, (int, float)) else None))
+        if isinstance(price, (int, float)):
+            conn.execute("INSERT INTO watchlist_price_history(chat_id,item_key,price) VALUES(?,?,?)", (chat_id, key, float(price)))
         conn.commit()
 
 
@@ -51,9 +54,18 @@ def list_all() -> list[dict[str, Any]]:
 
 
 def update_price(chat_id: int, item_key: str, price: float) -> None:
+    init_db()
     with _connect() as conn:
         conn.execute("UPDATE watchlist SET last_price=?, updated_at=CURRENT_TIMESTAMP WHERE chat_id=? AND item_key=?", (price, chat_id, item_key))
+        conn.execute("INSERT INTO watchlist_price_history(chat_id,item_key,price) VALUES(?,?,?)", (chat_id, item_key, float(price)))
         conn.commit()
+
+
+def price_history(chat_id: int, item_key: str, limit: int = 20) -> list[dict[str, Any]]:
+    init_db()
+    with _connect() as conn:
+        rows = conn.execute("SELECT price, recorded_at FROM watchlist_price_history WHERE chat_id=? AND item_key=? ORDER BY id DESC LIMIT ?", (chat_id, item_key, limit)).fetchall()
+    return [dict(row) for row in rows]
 
 
 def notification_sent(event_key: str, chat_id: int, item_key: str, price: float, now: float, cooldown: int) -> bool:
