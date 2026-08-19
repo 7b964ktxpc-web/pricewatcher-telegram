@@ -20,6 +20,16 @@ def _connect() -> sqlite3.Connection:
 def init_db() -> None:
     with _connect() as conn:
         conn.execute("CREATE TABLE IF NOT EXISTS watchlist (chat_id INTEGER NOT NULL, item_key TEXT NOT NULL, title TEXT NOT NULL, url TEXT, source TEXT, last_price REAL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY (chat_id, item_key))")
+        columns = {str(row[1]) for row in conn.execute("PRAGMA table_info(watchlist)").fetchall()}
+        if "item_key" not in columns:
+            conn.execute("ALTER TABLE watchlist ADD COLUMN item_key TEXT")
+            conn.execute("UPDATE watchlist SET item_key=COALESCE(NULLIF(url,''), title, CAST(rowid AS TEXT)) WHERE item_key IS NULL OR item_key='' ")
+        if "created_at" not in columns:
+            conn.execute("ALTER TABLE watchlist ADD COLUMN created_at TEXT")
+            conn.execute("UPDATE watchlist SET created_at=COALESCE(updated_at, CURRENT_TIMESTAMP) WHERE created_at IS NULL")
+        if "updated_at" not in columns:
+            conn.execute("ALTER TABLE watchlist ADD COLUMN updated_at TEXT")
+            conn.execute("UPDATE watchlist SET updated_at=CURRENT_TIMESTAMP WHERE updated_at IS NULL")
         conn.execute("CREATE TABLE IF NOT EXISTS watchlist_notifications (event_key TEXT PRIMARY KEY, chat_id INTEGER NOT NULL, item_key TEXT NOT NULL, price REAL NOT NULL, notified_at REAL NOT NULL)")
         conn.execute("CREATE TABLE IF NOT EXISTS watchlist_price_history (id INTEGER PRIMARY KEY AUTOINCREMENT, chat_id INTEGER NOT NULL, item_key TEXT NOT NULL, price REAL NOT NULL, recorded_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)")
         conn.commit()
@@ -42,21 +52,25 @@ def add(chat_id: int, item: dict[str, Any]) -> None:
 def list_for_chat(chat_id: int) -> list[dict[str, Any]]:
     init_db()
     with _connect() as conn:
-        rows = conn.execute("SELECT chat_id,item_key,title,url,source,last_price,created_at,updated_at FROM watchlist WHERE chat_id=? ORDER BY updated_at DESC", (chat_id,)).fetchall()
+        rows = conn.execute("SELECT chat_id,COALESCE(item_key,COALESCE(NULLIF(url,''),title,CAST(rowid AS TEXT))) AS item_key,title,url,source,last_price,created_at,updated_at FROM watchlist WHERE chat_id=? ORDER BY updated_at DESC", (chat_id,)).fetchall()
     return [dict(row) for row in rows]
 
 
 def list_all() -> list[dict[str, Any]]:
     init_db()
     with _connect() as conn:
-        rows = conn.execute("SELECT chat_id,item_key,title,url,source,last_price,created_at,updated_at FROM watchlist ORDER BY updated_at ASC").fetchall()
+        rows = conn.execute("SELECT chat_id,COALESCE(item_key,COALESCE(NULLIF(url,''),title,CAST(rowid AS TEXT))) AS item_key,title,url,source,last_price,created_at,updated_at FROM watchlist ORDER BY updated_at ASC").fetchall()
     return [dict(row) for row in rows]
 
 
 def update_price(chat_id: int, item_key: str, price: float) -> None:
     init_db()
     with _connect() as conn:
-        conn.execute("UPDATE watchlist SET last_price=?, updated_at=CURRENT_TIMESTAMP WHERE chat_id=? AND item_key=?", (price, chat_id, item_key))
+        columns = {str(row[1]) for row in conn.execute("PRAGMA table_info(watchlist)").fetchall()}
+        if "item_key" in columns:
+            conn.execute("UPDATE watchlist SET last_price=?, updated_at=CURRENT_TIMESTAMP WHERE chat_id=? AND item_key=?", (price, chat_id, item_key))
+        else:
+            conn.execute("UPDATE watchlist SET last_price=?, updated_at=CURRENT_TIMESTAMP WHERE chat_id=? AND COALESCE(NULLIF(url,''),title)=?", (price, chat_id, item_key))
         conn.execute("INSERT INTO watchlist_price_history(chat_id,item_key,price) VALUES(?,?,?)", (chat_id, item_key, float(price)))
         conn.commit()
 
@@ -65,7 +79,7 @@ def price_history(chat_id: int, item_key: str, limit: int = 20) -> list[dict[str
     init_db()
     with _connect() as conn:
         rows = conn.execute("SELECT price, recorded_at FROM watchlist_price_history WHERE chat_id=? AND item_key=? ORDER BY id DESC LIMIT ?", (chat_id, item_key, limit)).fetchall()
-    return [dict(row) for row in rows]
+    return [dict(row) for row in reversed(rows)]
 
 
 def notification_sent(event_key: str, chat_id: int, item_key: str, price: float, now: float, cooldown: int) -> bool:
@@ -81,6 +95,6 @@ def notification_sent(event_key: str, chat_id: int, item_key: str, price: float,
 
 def remove(chat_id: int, item_key: str) -> bool:
     with _connect() as conn:
-        cursor = conn.execute("DELETE FROM watchlist WHERE chat_id=? AND item_key=?", (chat_id, item_key))
+        cursor = conn.execute("DELETE FROM watchlist WHERE chat_id=? AND COALESCE(NULLIF(item_key,''),NULLIF(url,''),title)=?", (chat_id, item_key))
         conn.commit()
         return cursor.rowcount > 0
