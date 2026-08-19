@@ -8,8 +8,9 @@ from typing import Any
 import requests
 
 from ai_agent import plan_search
+from feed_adapters import FEED_ADAPTERS
 
-ALLOWED_MARKETPLACES = {"wildberries", "ozon", "yandex_market", "simaland"}
+ALLOWED_SOURCES = {"wildberries", "ozon", "yandex_market", "simaland", "detmir", "akusherstvo", "korablik"}
 TIMEOUT = float(os.getenv("AI_ROUTER_TIMEOUT", "20"))
 
 
@@ -49,7 +50,6 @@ def _provider_plan(name: str, prompt: str) -> dict[str, Any] | None:
         if name == "groq" and os.getenv("GROQ_API_KEY"):
             return _openai_chat("https://api.groq.com/openai/v1", os.environ["GROQ_API_KEY"], os.getenv("GROQ_MODEL", "qwen/qwen3.6-27b"), prompt)
         if name == "gemini" and os.getenv("GEMINI_API_KEY"):
-            # Gemini is optional; use its OpenAI-compatible endpoint when enabled.
             return _openai_chat("https://generativelanguage.googleapis.com/v1beta/openai", os.environ["GEMINI_API_KEY"], os.getenv("GEMINI_MODEL", "gemini-2.5-flash"), prompt)
         if name == "hf" and os.getenv("HF_TOKEN"):
             from huggingface_hub import InferenceClient
@@ -63,7 +63,7 @@ def _provider_plan(name: str, prompt: str) -> dict[str, Any] | None:
 
 
 def _prompt(query: str) -> str:
-    return f'''Разбери покупательский запрос. Верни JSON: query, category, age, gender, size, max_price, keywords, marketplaces. marketplaces выбирай только из wildberries, ozon, yandex_market, simaland. Если данных нет — null. Не выдумывай. Запрос: {query}'''
+    return f'''Разбери покупательский запрос. Верни JSON: query, category, age, gender, size, max_price, keywords, marketplaces. marketplaces выбирай только из wildberries, ozon, yandex_market, simaland, detmir, akusherstvo, korablik. Если данных нет — null. Не выдумывай. Запрос: {query}'''
 
 
 def build_plan(query: str) -> dict[str, Any]:
@@ -76,7 +76,6 @@ def build_plan(query: str) -> dict[str, Any]:
             result["_provider"] = provider
             plans.append(result)
 
-    # Qwen Space remains the default specialist and final fallback.
     qwen = plan_search(query)
     if qwen and not qwen.get("ai_parse_error"):
         qwen["_provider"] = "qwen-space"
@@ -85,14 +84,12 @@ def build_plan(query: str) -> dict[str, Any]:
     if not plans:
         return qwen
 
-    # Prefer a plan that specifies more concrete constraints; this reduces
-    # hallucinated broad searches when several free agents disagree.
     def score(p: dict[str, Any]) -> int:
         return sum(p.get(k) is not None for k in ("category", "age", "gender", "size", "max_price")) + min(len(p.get("keywords") or []), 3)
 
     best = max(plans, key=score)
-    markets = [x for x in best.get("marketplaces", []) if x in ALLOWED_MARKETPLACES]
-    best["marketplaces"] = markets or sorted(ALLOWED_MARKETPLACES)
+    markets = [x for x in best.get("marketplaces", []) if x in ALLOWED_SOURCES]
+    best["marketplaces"] = markets or sorted(ALLOWED_SOURCES)
     best["agents_consulted"] = [p.get("_provider") for p in plans]
     best.pop("_provider", None)
     return best
@@ -114,8 +111,35 @@ def expand_queries(plan: dict[str, Any], original: str) -> list[str]:
         queries.append(" ".join(parts))
     if keywords:
         queries.append(" ".join([str(category or "детские товары"), *keywords]))
-    # Stable, bounded expansion: no uncontrolled agent loops.
     return list(dict.fromkeys(q for q in queries if q))[:3]
+
+
+def resolve_sources(names: list[str]) -> list[str]:
+    """Translate logical marketplace names into configured runtime providers.
+
+    Child stores currently have feed-only adapters. If no feed is configured,
+    they are returned as explicit `not_configured` providers only when the
+    caller asks for them, avoiding accidental scraping of storefront HTML.
+    """
+    resolved: list[str] = []
+    for name in names:
+        if name in FEED_ADAPTERS:
+            adapter = FEED_ADAPTERS[name]
+            if adapter.configured():
+                resolved.append(name)
+            continue
+        if name in {"wildberries", "ozon", "yandex_market", "simaland"}:
+            resolved.append(name)
+            feed_key = f"{name}_feed"
+            adapter = FEED_ADAPTERS.get(feed_key)
+            if adapter and adapter.configured():
+                resolved.append(feed_key)
+        elif name in {"detmir", "akusherstvo", "korablik"}:
+            feed_key = f"{name}_feed"
+            adapter = FEED_ADAPTERS.get(feed_key)
+            if adapter and adapter.configured():
+                resolved.append(feed_key)
+    return list(dict.fromkeys(resolved))
 
 
 def router_status() -> dict[str, Any]:
@@ -126,7 +150,8 @@ def router_status() -> dict[str, Any]:
             "gemini": bool(os.getenv("GEMINI_API_KEY")),
             "huggingface_router": bool(os.getenv("HF_TOKEN")),
         },
-        "marketplaces": sorted(ALLOWED_MARKETPLACES),
+        "sources": sorted(ALLOWED_SOURCES),
         "query_expansion": True,
         "bounded_agent_calls": 4,
+        "feed_source_resolution": True,
     }
