@@ -10,6 +10,7 @@ import requests
 from agent_router import build_plan
 from conversation_agent import chat as ai_chat
 from telegram_photo_search import describe_image
+from watchlist_store import add as add_watch, init_db as init_watchlist_db
 
 TELEGRAM_API = "https://api.telegram.org/bot{token}/{method}"
 BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
@@ -18,7 +19,7 @@ MAX_HISTORY = int(os.getenv("TELEGRAM_HISTORY_SIZE", "12"))
 TIMEOUT = float(os.getenv("TELEGRAM_TIMEOUT", "20"))
 _history: dict[int, deque[dict[str, str]]] = defaultdict(lambda: deque(maxlen=MAX_HISTORY))
 _last_results: dict[int, list[dict[str, Any]]] = defaultdict(list)
-_watchlist: dict[int, set[str]] = defaultdict(set)
+init_watchlist_db()
 
 
 def enabled() -> bool:
@@ -142,10 +143,8 @@ def _handle_callback(chat_id: int, data: str) -> None:
         index = int(data.split(":", 1)[1])
         results = _last_results.get(chat_id, [])
         if 0 <= index < len(results):
-            item = results[index]
-            key = str(item.get("url") or item.get("product_id") or item.get("title") or index)
-            _watchlist[chat_id].add(key)
-            send_message(chat_id, "🔔 Готово. Добавила товар в список отслеживания. Следующий этап — постоянное хранение и уведомления о снижении цены.")
+            add_watch(chat_id, results[index])
+            send_message(chat_id, "🔔 Готово. Добавила товар в постоянный список отслеживания. После следующего этапа проверки цен я смогу присылать уведомление о снижении.")
         else:
             send_message(chat_id, "Этот результат уже устарел. Сделай новый поиск.")
     else:
