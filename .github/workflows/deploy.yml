@@ -21,8 +21,10 @@ jobs:
       - name: Deploy and verify
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
         run: |
           TOKEN_B64="$(printf '%s' "$TELEGRAM_BOT_TOKEN" | base64 -w0)"
+          DEEPSEEK_B64="$(printf '%s' "$DEEPSEEK_API_KEY" | base64 -w0)"
           ssh '${{ secrets.TIMEWEB_USER }}@${{ secrets.TIMEWEB_HOST }}' "set -e
             mkdir -p /opt/marketplace-parser/repo
             cd /opt/marketplace-parser/repo
@@ -34,26 +36,39 @@ jobs:
               git clone --branch main https://github.com/7b964ktxpc-web/pricewatcher-telegram.git .
             fi
 
+            : > .env.telegram
             if [ -n '$TOKEN_B64' ]; then
-              printf '%s' '$TOKEN_B64' | base64 -d > .env.telegram
-              chmod 600 .env.telegram
+              printf 'TELEGRAM_BOT_TOKEN=' >> .env.telegram
+              printf '%s' '$TOKEN_B64' | base64 -d >> .env.telegram
+              printf '\n' >> .env.telegram
               echo 'Telegram bot secret configured.'
             else
-              rm -f .env.telegram
               echo 'WARNING: TELEGRAM_BOT_TOKEN secret is not configured; Telegram bot will remain unusable.'
             fi
+            if [ -n '$DEEPSEEK_B64' ]; then
+              printf 'DEEPSEEK_API_KEY=' >> .env.telegram
+              printf '%s' '$DEEPSEEK_B64' | base64 -d >> .env.telegram
+              printf '\n' >> .env.telegram
+              echo 'DeepSeek fallback configured.'
+            fi
+            chmod 600 .env.telegram
 
             docker compose --env-file .env.telegram up -d --build --remove-orphans
 
             echo '=== CONTAINERS ==='
             docker compose ps
+            echo '=== TELEGRAM BOT STATE ==='
+            docker inspect repo-telegram-bot-1 --format '{{.State.Status}} {{.State.Restarting}}' || true
 
             echo '=== WAITING FOR HEALTH ==='
             for i in \$(seq 1 15); do
               if curl -fsS --max-time 5 http://127.0.0.1:8010/health; then
                 echo
                 echo 'HEALTH OK'
-                exit 0
+                if docker inspect repo-telegram-bot-1 --format '{{.State.Status}}' 2>/dev/null | grep -qx running; then
+                  echo 'TELEGRAM BOT RUNNING'
+                  exit 0
+                fi
               fi
               echo \"Waiting for application... \$i/15\"
               sleep 2
@@ -61,8 +76,6 @@ jobs:
 
             echo '=== HEALTHCHECK FAILED ==='
             docker compose ps
-            echo '=== CONTAINER STATE ==='
-            docker inspect repo-marketplace-parser-1 --format '{{json .State}}' || true
             echo '=== APPLICATION LOGS ==='
             docker compose logs --tail=200
             exit 1"
