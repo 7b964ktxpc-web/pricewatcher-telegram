@@ -25,12 +25,32 @@ jobs:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          WB_API_TOKEN: ${{ secrets.WB_API_TOKEN }}
+          YANDEX_MARKET_API_KEY: ${{ secrets.YANDEX_MARKET_API_KEY }}
+          YANDEX_MARKET_BUSINESS_ID: ${{ secrets.YANDEX_MARKET_BUSINESS_ID }}
+          WB_FEED_URL: ${{ secrets.WB_FEED_URL }}
+          OZON_FEED_URL: ${{ secrets.OZON_FEED_URL }}
+          YANDEX_MARKET_FEED_URL: ${{ secrets.YANDEX_MARKET_FEED_URL }}
+          SIMALAND_FEED_URL: ${{ secrets.SIMALAND_FEED_URL }}
+          DETMIR_FEED_URL: ${{ secrets.DETMIR_FEED_URL }}
+          AKUSHERSTVO_FEED_URL: ${{ secrets.AKUSHERSTVO_FEED_URL }}
+          KORABLIK_FEED_URL: ${{ secrets.KORABLIK_FEED_URL }}
         run: |
           TOKEN_B64="$(printf '%s' "$TELEGRAM_BOT_TOKEN" | base64 -w0)"
           DEEPSEEK_B64="$(printf '%s' "$DEEPSEEK_API_KEY" | base64 -w0)"
           HF_B64="$(printf '%s' "$HF_TOKEN" | base64 -w0)"
           GROQ_B64="$(printf '%s' "$GROQ_API_KEY" | base64 -w0)"
           GEMINI_B64="$(printf '%s' "$GEMINI_API_KEY" | base64 -w0)"
+          WB_API_B64="$(printf '%s' "$WB_API_TOKEN" | base64 -w0)"
+          YM_API_B64="$(printf '%s' "$YANDEX_MARKET_API_KEY" | base64 -w0)"
+          YM_BUSINESS_B64="$(printf '%s' "$YANDEX_MARKET_BUSINESS_ID" | base64 -w0)"
+          WB_FEED_B64="$(printf '%s' "$WB_FEED_URL" | base64 -w0)"
+          OZON_FEED_B64="$(printf '%s' "$OZON_FEED_URL" | base64 -w0)"
+          YM_FEED_B64="$(printf '%s' "$YANDEX_MARKET_FEED_URL" | base64 -w0)"
+          SIMALAND_FEED_B64="$(printf '%s' "$SIMALAND_FEED_URL" | base64 -w0)"
+          DETMIR_FEED_B64="$(printf '%s' "$DETMIR_FEED_URL" | base64 -w0)"
+          AKUSHERSTVO_FEED_B64="$(printf '%s' "$AKUSHERSTVO_FEED_URL" | base64 -w0)"
+          KORABLIK_FEED_B64="$(printf '%s' "$KORABLIK_FEED_URL" | base64 -w0)"
           ssh '${{ secrets.TIMEWEB_USER }}@${{ secrets.TIMEWEB_HOST }}' "set -e
             mkdir -p /opt/marketplace-parser/repo
             cd /opt/marketplace-parser/repo
@@ -41,11 +61,22 @@ jobs:
               git clone --branch main https://github.com/7b964ktxpc-web/pricewatcher-telegram.git .
             fi
             : > .env.telegram
-            if [ -n '$TOKEN_B64' ]; then printf 'TELEGRAM_BOT_TOKEN=' >> .env.telegram; printf '%s' '$TOKEN_B64' | base64 -d >> .env.telegram; printf '\n' >> .env.telegram; else echo 'WARNING: TELEGRAM_BOT_TOKEN is not configured.'; fi
-            if [ -n '$DEEPSEEK_B64' ]; then printf 'DEEPSEEK_API_KEY=' >> .env.telegram; printf '%s' '$DEEPSEEK_B64' | base64 -d >> .env.telegram; printf '\n' >> .env.telegram; fi
-            if [ -n '$HF_B64' ]; then printf 'HF_TOKEN=' >> .env.telegram; printf '%s' '$HF_B64' | base64 -d >> .env.telegram; printf '\n' >> .env.telegram; else echo 'WARNING: HF_TOKEN is not configured.'; fi
-            if [ -n '$GROQ_B64' ]; then printf 'GROQ_API_KEY=' >> .env.telegram; printf '%s' '$GROQ_B64' | base64 -d >> .env.telegram; printf '\n' >> .env.telegram; fi
-            if [ -n '$GEMINI_B64' ]; then printf 'GEMINI_API_KEY=' >> .env.telegram; printf '%s' '$GEMINI_B64' | base64 -d >> .env.telegram; printf '\n' >> .env.telegram; fi
+            write_secret() { key=\"\$1\"; value=\"\$2\"; if [ -n \"\$value\" ]; then printf '%s=' \"\$key\" >> .env.telegram; printf '%s' \"\$value\" | base64 -d >> .env.telegram; printf '\\n' >> .env.telegram; fi; }
+            write_secret TELEGRAM_BOT_TOKEN '$TOKEN_B64'
+            write_secret DEEPSEEK_API_KEY '$DEEPSEEK_B64'
+            write_secret HF_TOKEN '$HF_B64'
+            write_secret GROQ_API_KEY '$GROQ_B64'
+            write_secret GEMINI_API_KEY '$GEMINI_B64'
+            write_secret WB_API_TOKEN '$WB_API_B64'
+            write_secret YANDEX_MARKET_API_KEY '$YM_API_B64'
+            write_secret YANDEX_MARKET_BUSINESS_ID '$YM_BUSINESS_B64'
+            write_secret WB_FEED_URL '$WB_FEED_B64'
+            write_secret OZON_FEED_URL '$OZON_FEED_B64'
+            write_secret YANDEX_MARKET_FEED_URL '$YM_FEED_B64'
+            write_secret SIMALAND_FEED_URL '$SIMALAND_FEED_B64'
+            write_secret DETMIR_FEED_URL '$DETMIR_FEED_B64'
+            write_secret AKUSHERSTVO_FEED_URL '$AKUSHERSTVO_FEED_B64'
+            write_secret KORABLIK_FEED_URL '$KORABLIK_FEED_B64'
             chmod 600 .env.telegram
             docker compose --env-file .env.telegram up -d --build --remove-orphans
             echo '=== CONTAINERS ==='
