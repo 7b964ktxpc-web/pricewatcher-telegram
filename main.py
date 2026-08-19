@@ -1,10 +1,10 @@
 from fastapi import FastAPI, HTTPException, Query
 from normalizer import normalize_product
-from provider_engine import search_sources
+from resilient_provider_engine import search_sources
 from providers import PROVIDERS
 from source_registry import source_status
 
-app = FastAPI(title="Marketplace Parser Feed Engine", version="0.9.0")
+app = FastAPI(title="Marketplace Parser Feed Engine", version="0.9.1")
 
 @app.get("/")
 def root():
