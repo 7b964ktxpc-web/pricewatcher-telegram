@@ -23,10 +23,14 @@ jobs:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: |
           TOKEN_B64="$(printf '%s' "$TELEGRAM_BOT_TOKEN" | base64 -w0)"
           DEEPSEEK_B64="$(printf '%s' "$DEEPSEEK_API_KEY" | base64 -w0)"
           HF_B64="$(printf '%s' "$HF_TOKEN" | base64 -w0)"
+          GROQ_B64="$(printf '%s' "$GROQ_API_KEY" | base64 -w0)"
+          GEMINI_B64="$(printf '%s' "$GEMINI_API_KEY" | base64 -w0)"
           ssh '${{ secrets.TIMEWEB_USER }}@${{ secrets.TIMEWEB_HOST }}' "set -e
             mkdir -p /opt/marketplace-parser/repo
             cd /opt/marketplace-parser/repo
@@ -57,9 +61,21 @@ jobs:
               printf 'HF_TOKEN=' >> .env.telegram
               printf '%s' '$HF_B64' | base64 -d >> .env.telegram
               printf '\n' >> .env.telegram
-              echo 'Hugging Face vision token configured.'
+              echo 'Hugging Face token configured.'
             else
               echo 'WARNING: HF_TOKEN secret is not configured; photo search will be unavailable.'
+            fi
+            if [ -n '$GROQ_B64' ]; then
+              printf 'GROQ_API_KEY=' >> .env.telegram
+              printf '%s' '$GROQ_B64' | base64 -d >> .env.telegram
+              printf '\n' >> .env.telegram
+              echo 'Groq configured.'
+            fi
+            if [ -n '$GEMINI_B64' ]; then
+              printf 'GEMINI_API_KEY=' >> .env.telegram
+              printf '%s' '$GEMINI_B64' | base64 -d >> .env.telegram
+              printf '\n' >> .env.telegram
+              echo 'Gemini configured.'
             fi
             chmod 600 .env.telegram
 
