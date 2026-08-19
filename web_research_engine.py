@@ -83,16 +83,22 @@ def discover(query: str, limit: int = 8) -> dict[str, Any]:
     queries = [query, f"{query} купить цена", f"{query} скидка акция", f"{query} site:pepper.ru"]
     results: list[dict[str, Any]] = []
     errors: list[dict[str, Any]] = []
-    with ThreadPoolExecutor(max_workers=4, thread_name_prefix="web-search") as executor:
-        futures = [executor.submit(search_engine, q, "duckduckgo", limit) for q in queries]
+    engines = list(SEARCH_ENGINES)
+    jobs = [(q, engine) for q in queries for engine in engines]
+    with ThreadPoolExecutor(max_workers=min(8, len(jobs)), thread_name_prefix="web-search") as executor:
+        futures = [executor.submit(search_engine, q, engine, limit) for q, engine in jobs]
         for future in as_completed(futures):
             for item in future.result():
                 (errors if item.get("error") else results).append(item)
+
+    # Prefer known marketplaces/deal sites, but keep ordinary shops as fallback.
+    priority = {"pepper": 0, "ozon": 1, "wildberries": 1, "yandex_market": 1, "simaland": 2, "detmir": 2}
+    results.sort(key=lambda x: (priority.get(x.get("source"), 3), x.get("title", "").lower()))
     dedup: dict[str, dict[str, Any]] = {}
     for item in results:
         dedup.setdefault(item["url"].split("#", 1)[0], item)
     items = list(dedup.values())
-    return {"query": query, "count": len(items), "items": items[:max(1, limit)], "queries": queries, "engines": ["duckduckgo"], "errors": errors}
+    return {"query": query, "count": len(items), "items": items[:max(1, limit)], "queries": queries, "engines": engines, "errors": errors}
 
 
 def fetch_page(url: str) -> dict[str, Any]:
