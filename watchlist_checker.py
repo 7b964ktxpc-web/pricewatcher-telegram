@@ -10,6 +10,7 @@ from urllib.parse import urlsplit, urlunsplit
 import requests
 
 from telegram_bot import send_message
+from watchlist_notification_policy import describe, qualifies
 from watchlist_store import list_all, notification_sent, update_price
 
 PARSER_BASE_URL = os.getenv("PARSER_PUBLIC_URL", "http://127.0.0.1:8010").rstrip("/")
@@ -75,7 +76,6 @@ def _best_price(item: dict[str, Any], offers: list[dict[str, Any]]) -> float | N
                     exact_prices.append(price)
         if exact_prices:
             return min(exact_prices)
-
     matched_prices = [
         price
         for offer in offers
@@ -124,22 +124,22 @@ def check_once() -> int:
             old_price = _price({"price": item.get("last_price")})
             update_price(chat_id, item_key, new_price)
             checked += 1
-            if old_price is not None and new_price < old_price:
-                event_key = _event_key(item, new_price)
-                already_notified = notification_sent(event_key, chat_id, item_key, new_price, time.time(), NOTIFICATION_COOLDOWN)
-                if already_notified:
-                    continue
-                drop = old_price - new_price
-                percent = drop / old_price * 100 if old_price else 0
-                send_message(
-                    chat_id,
-                    (
-                        f"📉 Цена снизилась!\n\n{item['title']}\n"
-                        f"💰 Было: {old_price:,.0f} ₽\n"
-                        f"🔥 Сейчас: {new_price:,.0f} ₽\n"
-                        f"⬇️ Экономия: {drop:,.0f} ₽ ({percent:.0f}%)"
-                    ).replace(",", " "),
-                )
+            if not qualifies(old_price, new_price):
+                continue
+            event_key = _event_key(item, new_price)
+            already_notified = notification_sent(event_key, chat_id, item_key, new_price, time.time(), NOTIFICATION_COOLDOWN)
+            if already_notified:
+                continue
+            drop, percent = describe(old_price, new_price)
+            send_message(
+                chat_id,
+                (
+                    f"📉 Цена снизилась!\n\n{item['title']}\n"
+                    f"💰 Было: {old_price:,.0f} ₽\n"
+                    f"🔥 Сейчас: {new_price:,.0f} ₽\n"
+                    f"⬇️ Экономия: {drop:,.0f} ₽ ({percent:.1f}%)"
+                ).replace(",", " "),
+            )
         except Exception as exc:
             print(f"Watchlist check error for {item.get('item_key')}: {exc}", flush=True)
     return checked
