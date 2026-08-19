@@ -34,7 +34,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          for i in $(seq 1 30); do
+          for i in $(seq 1 45); do
             state="$(curl -fsS \
               -H "Authorization: Bearer $GH_TOKEN" \
               -H "Accept: application/vnd.github+json" \
@@ -51,7 +51,7 @@ jobs:
                 exit 1
                 ;;
               *)
-                echo "Waiting for CI status... $i/30"
+                echo "Waiting for CI status... $i/45"
                 sleep 2
                 ;;
             esac
@@ -81,7 +81,9 @@ jobs:
           install -m 700 -d "$HOME/.ssh"
           printf '%s\n' "$TIMEWEB_SSH_KEY" > "$HOME/.ssh/id_ed25519"
           chmod 600 "$HOME/.ssh/id_ed25519"
-          ssh-keyscan -H "$TIMEWEB_HOST" >> "$HOME/.ssh/known_hosts"
+          echo "Checking Timeweb SSH endpoint"
+          timeout 10 bash -c 'cat < /dev/null > /dev/tcp/$TIMEWEB_HOST/22'
+          echo "Timeweb SSH port reachable"
 
       - name: Deploy and verify
         id: deploy_verify
@@ -126,7 +128,7 @@ jobs:
           export KORABLIK_FEED_B64="$(b64 "$KORABLIK_FEED_URL")"
           EXPECTED_SHA="$GITHUB_SHA"
 
-          ssh -i "$HOME/.ssh/id_ed25519" -o BatchMode=yes "$TIMEWEB_USER@$TIMEWEB_HOST" \
+          ssh -i "$HOME/.ssh/id_ed25519" -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=10 "$TIMEWEB_USER@$TIMEWEB_HOST" \
             "APP_DIR='$TIMEWEB_APP_DIR' EXPECTED_SHA='$EXPECTED_SHA' TOKEN_B64='$TOKEN_B64' ADMIN_TOKEN_B64='$ADMIN_TOKEN_B64' ADMIN_IDS_B64='$ADMIN_IDS_B64' DEEPSEEK_B64='$DEEPSEEK_B64' HF_B64='$HF_B64' GROQ_B64='$GROQ_B64' GEMINI_B64='$GEMINI_B64' WB_API_B64='$WB_API_B64' YM_API_B64='$YM_API_B64' YM_BUSINESS_B64='$YM_BUSINESS_B64' WB_FEED_B64='$WB_FEED_B64' OZON_FEED_B64='$OZON_FEED_B64' YM_FEED_B64='$YM_FEED_B64' SIMALAND_FEED_B64='$SIMALAND_FEED_B64' DETMIR_FEED_B64='$DETMIR_FEED_B64' AKUSHERSTVO_FEED_B64='$AKUSHERSTVO_FEED_B64' KORABLIK_FEED_B64='$KORABLIK_FEED_B64' bash -se" <<'REMOTE'
           set -euo pipefail
 
