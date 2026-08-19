@@ -12,6 +12,26 @@ from catalog_store import init_db, search_catalog, stats as catalog_stats, upser
 app = FastAPI(title="Marketplace Parser Feed Engine", version="0.20.0")
 init_db()
 
+
+def summarize_feed_readiness(feeds):
+    """Normalize the feed-manager public contract for readiness responses."""
+    if isinstance(feeds, dict):
+        configured = feeds.get("configured", [])
+        results = feeds.get("results", [])
+        return {
+            "configured": len(configured) if isinstance(configured, (list, tuple, set)) else 0,
+            "total": int(feeds.get("checked", len(results) if isinstance(results, list) else 0)),
+            "items": feeds,
+        }
+    if isinstance(feeds, (list, tuple)):
+        items = [item for item in feeds if isinstance(item, dict)]
+        return {
+            "configured": sum(1 for item in items if item.get("configured")),
+            "total": len(feeds),
+            "items": feeds,
+        }
+    return {"configured": 0, "total": 0, "items": feeds}
+
 @app.get("/")
 def root():
     return {"service": "marketplace-parser", "version": app.version, "status": "ready"}
@@ -52,11 +72,7 @@ def connections():
 
 @app.get("/api/readiness")
 def readiness():
-    """Deployment-safe readiness report for the main integrations.
-
-    This endpoint never makes paid AI calls and never returns credentials.
-    It tells the deployment/operator which connection blocks are configured.
-    """
+    """Deployment-safe readiness report for the main integrations."""
     from marketplace_adapters import adapter_status
     from feed_adapter_manager import inspect_feeds
     from conversation_agent import status as chat_status
@@ -64,17 +80,8 @@ def readiness():
     adapters = adapter_status()
     feeds = inspect_feeds()
     ai = chat_status()
-    configured_marketplaces = sum(1 for item in adapters if item.get("configured"))
-
-    # inspect_feeds() returns a structured report, not a list. Keep the
-    # readiness endpoint tolerant of that public shape and derive counts from
-    # its stable fields instead of iterating dictionary keys as feed records.
-    if isinstance(feeds, dict):
-        configured_feeds = len(feeds.get("configured", []))
-        feed_total = int(feeds.get("checked", len(feeds.get("results", []))))
-    else:
-        configured_feeds = sum(1 for item in feeds if isinstance(item, dict) and item.get("configured"))
-        feed_total = len(feeds)
+    configured_marketplaces = sum(1 for item in adapters if isinstance(item, dict) and item.get("configured"))
+    feed_summary = summarize_feed_readiness(feeds)
 
     ai_ready = bool(ai.get("qwen") or ai.get("deepseek_configured") or ai.get("groq_configured") or ai.get("gemini_configured"))
     telegram_ready = bool(os.getenv("TELEGRAM_BOT_TOKEN"))
@@ -83,8 +90,8 @@ def readiness():
         "telegram": {"configured": telegram_ready},
         "ai": {"ready": ai_ready, "providers": ai.get("providers", [])},
         "marketplaces": {"configured": configured_marketplaces, "total": len(adapters), "items": adapters},
-        "feeds": {"configured": configured_feeds, "total": feed_total, "items": feeds},
-        "next": "connect at least one marketplace/feed for real product data" if configured_marketplaces + configured_feeds == 0 else "run a real Telegram search",
+        "feeds": feed_summary,
+        "next": "connect at least one marketplace/feed for real product data" if configured_marketplaces + feed_summary["configured"] == 0 else "run a real Telegram search",
     }
 
 @app.get("/api/discovery")
