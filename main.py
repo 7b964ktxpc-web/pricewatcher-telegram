@@ -9,7 +9,7 @@ from source_registry import source_status
 from source_discovery import discover_sources
 from catalog_store import init_db, search_catalog, stats as catalog_stats, upsert_products
 
-app = FastAPI(title="Marketplace Parser Feed Engine", version="0.14.0")
+app = FastAPI(title="Marketplace Parser Feed Engine", version="0.15.0")
 init_db()
 
 @app.get("/")
@@ -22,7 +22,12 @@ def health():
 
 @app.get("/api/sources")
 def sources():
-    return {"sources": list(PROVIDERS), "registry": source_status(), "mode": "independent-public-adapters"}
+    return {"sources": list(PROVIDERS), "registry": source_status(), "mode": "public-feeds-plus-official-marketplace-apis"}
+
+@app.get("/api/marketplace-adapters")
+def marketplace_adapters():
+    from marketplace_adapters import adapter_status
+    return {"adapters": adapter_status()}
 
 @app.get("/api/discovery")
 def discovery():
@@ -101,7 +106,6 @@ def agent_search(q: str = Query(min_length=1, max_length=500), limit: int = Quer
     if isinstance(max_price, (int, float)):
         collected = [x for x in collected if isinstance(x.get("price"), (int, float)) and x["price"] <= max_price]
 
-    # Local catalog is the fast fallback/cache and is searched regardless of remote source health.
     collected.extend(search_catalog(query_text, max(20, limit * 3), max_price if isinstance(max_price, (int, float)) else None))
     ranked = rank_items(collected, plan, max(1, limit * 3))
     groups = group_products(ranked, threshold=float(os.getenv("PRODUCT_MATCH_THRESHOLD", "0.72")))
