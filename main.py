@@ -9,7 +9,7 @@ from source_registry import source_status
 from source_discovery import discover_sources
 from catalog_store import init_db, search_catalog, stats as catalog_stats, upsert_products
 
-app = FastAPI(title="Marketplace Parser Feed Engine", version="0.16.0")
+app = FastAPI(title="Marketplace Parser Feed Engine", version="0.17.0")
 init_db()
 
 @app.get("/")
@@ -79,6 +79,14 @@ def ai_plan(q: str = Query(min_length=1, max_length=500)):
 def web_research(q: str = Query(min_length=1, max_length=500), limit: int = Query(default=8, ge=1, le=20), fetch_pages: bool = Query(default=True)):
     from agent_web_pipeline import search_web
     return search_web(q.strip(), limit)
+
+@app.get("/api/child-search")
+def child_search(q: str = Query(min_length=1, max_length=500), limit: int = Query(default=12, ge=1, le=30)):
+    from child_deal_search import search_child_deals
+    try:
+        return search_child_deals(q.strip(), limit)
+    except Exception as exc:
+        raise HTTPException(502, f"Child deal search failed: {exc}") from exc
 
 @app.get("/api/agent/search")
 def agent_search(q: str = Query(min_length=1, max_length=500), limit: int = Query(default=20, ge=1, le=50)):
