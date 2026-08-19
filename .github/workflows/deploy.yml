@@ -89,6 +89,9 @@ jobs:
                 if docker compose ps --status running --services | grep -qx telegram-bot && docker compose ps --status running --services | grep -qx watchlist-checker; then
                   echo 'TELEGRAM BOT RUNNING'
                   echo 'WATCHLIST CHECKER RUNNING'
+                  echo '=== CONNECTION DASHBOARD ==='
+                  curl -fsS --max-time 10 http://127.0.0.1:8010/api/connections
+                  echo
                   exit 0
                 fi
               fi
