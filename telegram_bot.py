@@ -141,53 +141,161 @@ def _search(chat_id: int, query: str) -> None:
         except Exception as exc:
             errors.append(f"{path}: {exc}")
     if data is None:
-        send_message(chat_id, "😔 Не получилось найти товары прямо сейчас.\n\nПопробуй изменить запрос или повторить позже.", back_keyboard())
+        print(f"Telegram search unavailable: {'; '.join(errors)}", flush=True)
+        send_message(chat_id, "😔 <b>Поиск сейчас недоступен</b>\n\nПопробуй ещё раз немного позже.", menu_keyboard())
         return
     items = _extract_search_items(data)
-    _last_results[chat_id] = items
-    send_message(chat_id, f"🔎 <b>Нашла варианты: {len(items)}</b>\n\nВыбери подходящий товар ниже.")
-    for index, item in enumerate(items[:8]):
-        title = str(item.get("title") or item.get("name") or "Товар")
-        price = _format_price(item.get("price", item.get("lowest_price")))
-        source = str(item.get("source") or item.get("marketplace") or "")
-        text = f"🧸 <b>{title}</b>\n💰 <b>{price}</b>"
-        if source:
-            text += f"\n🏪 {source}"
-        send_message(chat_id, text, deal_keyboard(item, index))
-    send_message(chat_id, "💡 Можно нажать «🔔 Следить за ценой», чтобы я сообщил о заметном снижении.", menu_keyboard())
-
-
-def _search_from_photo(chat_id: int, file_id: str) -> None:
-    try:
-        result = describe_image(file_id)
-    except Exception:
-        result = "товар для детей"
-    send_message(chat_id, f"📸 <b>Попробую найти по фото</b>\n\n🔎 Определила запрос: <i>{result}</i>")
-    _search(chat_id, result)
-
-
-def handle_update(update: dict[str, Any]) -> None:
-    message = update.get("message") or {}
-    chat = message.get("chat") or {}
-    chat_id = chat.get("id")
-    if chat_id is None:
+    if not items:
+        send_message(chat_id, "🔎 <b>Подходящих вариантов пока не нашла</b>\n\nПопробуй изменить бюджет, размер или описание товара.", menu_keyboard())
         return
-    text = str(message.get("text") or "").strip()
+    _last_results[chat_id] = items[:8]
+    _remember(chat_id, "assistant", f"Нашла варианты по запросу: {query}")
+    send_message(chat_id, f"🎉 <b>Нашла {len(_last_results[chat_id])} вариантов</b>\n\nСначала показываю наиболее подходящие 👇")
+    for index, item in enumerate(_last_results[chat_id], 1):
+        title = str(item.get("title") or "Товар")
+        price = item.get("lowest_price", item.get("price"))
+        source = item.get("source") or item.get("marketplace") or "магазин"
+        text = f"<b>{index}. {title}</b>\n💰 <b>{_format_price(price)}</b>\n🏪 {source}"
+        if item.get("old_price") and isinstance(item.get("old_price"), (int, float)):
+            text += f"\n🏷 Было: {_format_price(item['old_price'])}"
+        if item.get("offer_count"):
+            text += f"\n📊 Предложений: {item['offer_count']}"
+        send_message(chat_id, text, deal_keyboard(item, index - 1))
+    send_message(chat_id, "Можно купить, поискать дешевле или включить 🔔 отслеживание.", menu_keyboard())
+
+
+def _rerun_deal_action(chat_id: int, index: int, mode: str) -> None:
+    results = _last_results.get(chat_id, [])
+    if index < 0 or index >= len(results):
+        send_message(chat_id, "Этот результат уже устарел. Давай сделаем новый поиск.", menu_keyboard())
+        return
+    title = str(results[index].get("title") or "товар")
+    if mode == "cheaper":
+        send_message(chat_id, "💰 <b>Ищу дешевле…</b>\nСравниваю доступные предложения.")
+        _search(chat_id, f"найди дешевле: {title}")
+    else:
+        send_message(chat_id, "🔄 <b>Проверяю цену…</b>\nИщу актуальные предложения.")
+        _search(chat_id, title)
+
+
+def _handle_callback(chat_id: int, data: str) -> None:
+    if data in {"home", "start"}:
+        send_message(chat_id, WELCOME_TEXT, menu_keyboard())
+    elif data == "search":
+        send_message(chat_id, "🔎 <b>Что ищем?</b>\n\nНапиши товар, размер/возраст и бюджет.\nНапример: «Зимняя куртка девочке 6 лет до 5000 ₽»", back_keyboard())
+    elif data == "photo":
+        send_message(chat_id, "📸 <b>Пришли фото товара</b>\n\nЯ попробую определить его и найти такой же или похожие варианты.", back_keyboard())
+    elif data == "chat":
+        send_message(chat_id, "💬 <b>Я слушаю</b>\n\nПиши вопрос обычными словами — помогу уточнить поиск или подобрать варианты.", back_keyboard())
+    elif data == "cheaper_menu":
+        send_message(chat_id, "💰 <b>Найти дешевле</b>\n\nНапиши, какой товар хочешь купить, и я попробую найти более выгодные предложения.", back_keyboard())
+    elif data == "watchlist":
+        _show_watchlist(chat_id)
+    elif data == "help":
+        send_message(chat_id, HELP_TEXT, back_keyboard())
+    elif data.startswith("cheaper:"):
+        _rerun_deal_action(chat_id, int(data.split(":", 1)[1]), "cheaper")
+    elif data.startswith("refresh:"):
+        _rerun_deal_action(chat_id, int(data.split(":", 1)[1]), "refresh")
+    elif data.startswith("watch:"):
+        index = int(data.split(":", 1)[1])
+        results = _last_results.get(chat_id, [])
+        if 0 <= index < len(results):
+            add_watch(chat_id, results[index])
+            send_message(chat_id, "🔔 <b>Готово!</b>\n\nЯ буду следить за ценой этого товара и сообщу о заметном снижении.", menu_keyboard())
+        else:
+            send_message(chat_id, "Этот результат уже устарел. Сделай новый поиск.", menu_keyboard())
+    elif data.startswith("unwatch:"):
+        key = data.split(":", 1)[1]
+        if remove_watch(chat_id, key):
+            send_message(chat_id, "❌ Товар убран из отслеживания.", menu_keyboard())
+        else:
+            send_message(chat_id, "Этот товар уже не отслеживается.", menu_keyboard())
+    else:
+        send_message(chat_id, "Не поняла действие. Открой главное меню и попробуй ещё раз.", menu_keyboard())
+
+
+def _looks_like_search(text: str) -> bool:
+    return bool(re.search(r"найди|поищи|подбери|купить|нужн|товар|дешевле|скидк|цена|₽|руб|размер|лет|год|мальчик|девочк", text, re.I))
+
+
+def handle_text(chat_id: int, text: str) -> None:
+    text = text.strip()
+    if not text:
+        return
+    _remember(chat_id, "user", text)
     if text in {"/start", "/menu"}:
         send_message(chat_id, WELCOME_TEXT, menu_keyboard())
         return
     if text == "/help":
         send_message(chat_id, HELP_TEXT, menu_keyboard())
         return
-    if text == "/watchlist":
+    if text in {"/watchlist", "мои товары", "отслеживаемые товары"}:
         _show_watchlist(chat_id)
         return
-    photo = message.get("photo") or []
-    if photo:
-        _search_from_photo(chat_id, photo[-1].get("file_id", ""))
+    if _looks_like_search(text):
+        _search(chat_id, "\n".join(f"{m['role']}: {m['content']}" for m in _context(chat_id)))
         return
-    if text:
-        _remember(chat_id, "user", text)
-        _search(chat_id, text)
+    reply = ai_chat(_context(chat_id))
+    _remember(chat_id, "assistant", reply)
+    send_message(chat_id, reply, menu_keyboard())
 
 
+def _telegram_file(file_id: str) -> tuple[bytes, str]:
+    info = _api("getFile", {"file_id": file_id}).get("result", {})
+    path = info.get("file_path")
+    if not path:
+        raise RuntimeError("Telegram did not return file_path")
+    response = requests.get(f"https://api.telegram.org/file/bot{BOT_TOKEN}/{path}", timeout=TIMEOUT)
+    response.raise_for_status()
+    mime = "image/png" if path.lower().endswith(".png") else "image/jpeg"
+    return response.content, mime
+
+
+def handle_photo(chat_id: int, file_id: str, caption: str = "") -> None:
+    send_message(chat_id, "📸 Смотрю на фото и пытаюсь понять, что это за товар…")
+    try:
+        image, mime = _telegram_file(file_id)
+        description = describe_image(image, mime)
+        query = str(description.get("query") or caption or "детский товар")
+        _remember(chat_id, "user", f"Фото товара: {query}")
+        if caption:
+            query = f"{query}. Дополнение пользователя: {caption}"
+        _search(chat_id, query)
+    except Exception as exc:
+        print(f"Telegram photo search error: {exc}", flush=True)
+        send_message(chat_id, "Не смогла надёжно определить товар по фото. Пришли более чёткое фото или напиши, что именно нужно найти.", menu_keyboard())
+
+
+def run_once(offset: int | None = None) -> int | None:
+    if not enabled():
+        raise RuntimeError("TELEGRAM_BOT_TOKEN is not configured")
+    payload = {"timeout": 5, "allowed_updates": ["message", "callback_query"]}
+    if offset is not None:
+        payload["offset"] = offset
+    updates = _api("getUpdates", payload).get("result", [])
+    next_offset = offset
+    for update in updates:
+        next_offset = int(update["update_id"]) + 1
+        callback = update.get("callback_query")
+        if callback:
+            chat = callback.get("message", {}).get("chat", {})
+            chat_id = chat.get("id")
+            _api("answerCallbackQuery", {"callback_query_id": callback["id"]})
+            if chat_id:
+                try:
+                    _handle_callback(int(chat_id), str(callback.get("data") or ""))
+                except Exception as exc:
+                    print(f"Telegram callback error: {exc}", flush=True)
+                    send_message(int(chat_id), "Не удалось выполнить действие. Попробуй ещё раз.", menu_keyboard())
+            continue
+        message = update.get("message", {})
+        chat_id = message.get("chat", {}).get("id")
+        if not chat_id:
+            continue
+        if message.get("photo"):
+            largest = max(message["photo"], key=lambda photo: photo.get("width", 0) * photo.get("height", 0))
+            handle_photo(int(chat_id), str(largest["file_id"]), str(message.get("caption") or ""))
+        elif message.get("text"):
+            handle_text(int(chat_id), str(message["text"]))
+    return next_offset
