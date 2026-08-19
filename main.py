@@ -83,7 +83,13 @@ def connections():
 
 @app.get("/api/readiness")
 def readiness():
-    """Deployment-safe readiness report including the agent web-research path."""
+    """Deployment readiness for the parser/API service.
+
+    Telegram runs as a separate Compose service and therefore is intentionally
+    not required in this container's environment. Requiring its secret here
+    would make the parser report not-ready even while the Telegram bot and
+    watcher are correctly configured and running.
+    """
     from marketplace_adapters import adapter_status
     from feed_adapter_manager import inspect_feeds
     from conversation_agent import status as chat_status
@@ -95,13 +101,12 @@ def readiness():
     feed_summary = summarize_feed_readiness(feeds)
 
     ai_ready = bool(ai.get("qwen") or ai.get("deepseek_configured") or ai.get("groq_configured") or ai.get("gemini_configured"))
-    telegram_ready = bool(os.getenv("TELEGRAM_BOT_TOKEN"))
     web_research_ready = True
-    ready = bool(telegram_ready and ai_ready and web_research_ready)
-    next_step = "run a real Telegram/web search" if ready else "configure Telegram and at least one AI provider"
+    ready = bool(ai_ready and web_research_ready)
+    next_step = "run a real Telegram/web search" if ready else "configure at least one AI provider"
     return {
         "ready": ready,
-        "telegram": {"configured": telegram_ready},
+        "telegram": {"configured": None, "service": "telegram-bot", "note": "configured in the telegram-bot service"},
         "ai": {"ready": ai_ready, "providers": ai.get("providers", [])},
         "web_research": {"ready": web_research_ready, "engines": ["duckduckgo", "bing"]},
         "marketplaces": {"configured": configured_marketplaces, "total": len(adapters), "items": adapters},
@@ -258,4 +263,3 @@ def search(q: str = Query(min_length=1, max_length=300), limit: int = Query(defa
 
 @app.get("/api/test-product")
 def test_product():
-    return normalize_product(source="test", marketplace="test", product_id="123", title="Тестовый товар", price=999, old_price=1999, url="https://example.com/product/123", category="Тест", available=True)
