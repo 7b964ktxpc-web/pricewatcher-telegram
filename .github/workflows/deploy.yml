@@ -125,6 +125,25 @@ jobs:
           write_secret KORABLIK_FEED_URL "$KORABLIK_FEED_B64"
           chmod 600 .env.telegram
 
+          # Docker Compose interpolation must see required secrets in the
+          # process environment. Keep the .env file for persistence, but do
+          # not source it because decoded secrets may contain shell syntax.
+          export TELEGRAM_BOT_TOKEN="$(printf '%s' "$TOKEN_B64" | base64 -d)"
+          export DEEPSEEK_API_KEY="$(printf '%s' "$DEEPSEEK_B64" | base64 -d)"
+          export HF_TOKEN="$(printf '%s' "$HF_B64" | base64 -d)"
+          export GROQ_API_KEY="$(printf '%s' "$GROQ_B64" | base64 -d)"
+          export GEMINI_API_KEY="$(printf '%s' "$GEMINI_B64" | base64 -d)"
+          export WB_API_TOKEN="$(printf '%s' "$WB_API_B64" | base64 -d)"
+          export YANDEX_MARKET_API_KEY="$(printf '%s' "$YM_API_B64" | base64 -d)"
+          export YANDEX_MARKET_BUSINESS_ID="$(printf '%s' "$YM_BUSINESS_B64" | base64 -d)"
+          export WB_FEED_URL="$(printf '%s' "$WB_FEED_B64" | base64 -d)"
+          export OZON_FEED_URL="$(printf '%s' "$OZON_FEED_B64" | base64 -d)"
+          export YANDEX_MARKET_FEED_URL="$(printf '%s' "$YM_FEED_B64" | base64 -d)"
+          export SIMALAND_FEED_URL="$(printf '%s' "$SIMALAND_FEED_B64" | base64 -d)"
+          export DETMIR_FEED_URL="$(printf '%s' "$DETMIR_FEED_B64" | base64 -d)"
+          export AKUSHERSTVO_FEED_URL="$(printf '%s' "$AKUSHERSTVO_FEED_B64" | base64 -d)"
+          export KORABLIK_FEED_URL="$(printf '%s' "$KORABLIK_FEED_B64" | base64 -d)"
+
           docker compose --env-file .env.telegram up -d --build --remove-orphans
           docker compose ps
 
