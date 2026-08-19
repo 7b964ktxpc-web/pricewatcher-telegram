@@ -6,29 +6,25 @@ from dataclasses import dataclass
 from typing import Any, Callable
 
 from ai_agent import plan_search
+from ai_providers import deepseek
 
 
 @dataclass(frozen=True)
 class AgentSpec:
     name: str
     enabled_env: str
-    handler: Callable[[str], str]
+    handler: Callable[[str], Any]
 
 
 class AIRouter:
-    """Fail-soft multi-agent router: Qwen is primary, other agents are optional fallbacks."""
+    """Fail-soft multi-agent router with Qwen primary and optional DeepSeek validation."""
 
     def __init__(self) -> None:
         self.timeout = float(os.getenv("AI_ROUTER_TIMEOUT", "90"))
-        self.max_attempts = max(1, int(os.getenv("AI_ROUTER_MAX_ATTEMPTS", "3")))
-
-    @staticmethod
-    def _enabled(env_name: str) -> bool:
-        return os.getenv(env_name, "").strip().lower() in {"1", "true", "yes", "on"}
 
     def agents(self) -> list[AgentSpec]:
         return [
-            AgentSpec("qwen_hf", "AI_QWEN_ENABLED", lambda request: str(plan_search(request))),
+            AgentSpec("qwen_hf", "AI_QWEN_ENABLED", lambda request: plan_search(request)),
         ]
 
     def route(self, request: str) -> dict[str, Any]:
@@ -38,24 +34,41 @@ class AIRouter:
 
         started = time.monotonic()
         attempts: list[dict[str, Any]] = []
+        qwen_result: Any = None
+
         for spec in self.agents():
-            # Qwen is available by default; optional agents must opt in.
-            if spec.name != "qwen_hf" and not self._enabled(spec.enabled_env):
+            if spec.name != "qwen_hf" and os.getenv(spec.enabled_env, "").lower() not in {"1", "true", "yes", "on"}:
                 continue
             try:
-                result = spec.handler(request)
-                elapsed = round(time.monotonic() - started, 3)
-                attempts.append({"agent": spec.name, "status": "ok", "elapsed_s": elapsed})
-                if isinstance(result, str):
-                    return {"ok": True, "agent": spec.name, "result": result, "attempts": attempts}
-                return {"ok": True, "agent": spec.name, "result": result, "attempts": attempts}
+                qwen_result = spec.handler(request)
+                attempts.append({"agent": spec.name, "status": "ok", "elapsed_s": round(time.monotonic() - started, 3)})
+                break
             except Exception as exc:
                 attempts.append({"agent": spec.name, "status": "error", "error": str(exc)})
-                if time.monotonic() - started >= self.timeout:
-                    break
+                qwen_result = None
 
-        # Deterministic fallback keeps the search engine usable without any AI provider.
-        return {"ok": True, "agent": "deterministic", "result": plan_search(request), "attempts": attempts}
+        if qwen_result is None:
+            qwen_result = plan_search(request)
+
+        # DeepSeek is a validator/second opinion, never a hard dependency.
+        if deepseek.enabled and time.monotonic() - started < self.timeout:
+            validation_prompt = (
+                "Проверь поисковый план для проекта Мама, дешевле!. "
+                "Верни только JSON. Не меняй значения без необходимости. "
+                f"Запрос покупателя: {request}\nПлан: {qwen_result}"
+            )
+            result = deepseek.complete(validation_prompt)
+            attempts.append({"agent": result.provider, "status": "ok" if result.ok else "skipped", "error": result.error})
+            if result.ok and result.text:
+                return {
+                    "ok": True,
+                    "agent": "qwen_hf+deepseek_validator",
+                    "result": qwen_result,
+                    "validation": result.text,
+                    "attempts": attempts,
+                }
+
+        return {"ok": True, "agent": "qwen_hf" if qwen_result else "deterministic", "result": qwen_result, "attempts": attempts}
 
 
 router = AIRouter()
