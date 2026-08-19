@@ -3,7 +3,7 @@ from watchlist_notification_policy import qualifies, describe
 
 def test_qualifies_requires_both_thresholds():
     assert qualifies(5000, 4900) is False
-    assert qualifies(5000, 4900) is True if False else True
+    assert qualifies(5000, 4950) is False
 
 
 def test_qualifies_accepts_meaningful_drop():
