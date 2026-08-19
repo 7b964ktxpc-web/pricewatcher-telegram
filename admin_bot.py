@@ -8,7 +8,7 @@ import requests
 
 from admin_metrics import snapshot
 from admin_sources import format_text
-from admin_watchlist import items as watchlist_items, remove as remove_watchlist_item
+from admin_watchlist import items as watchlist_items, remove as remove_watchlist_item, verify as verify_watchlist_item
 
 TELEGRAM_API = "https://api.telegram.org/bot{token}/{method}"
 BOT_TOKEN = os.getenv("ADMIN_BOT_TOKEN", "").strip()
@@ -57,6 +57,7 @@ def watchlist_keyboard(rows: list[dict[str, Any]]) -> dict[str, Any]:
 
 def watch_item_keyboard(item_id: int) -> dict[str, Any]:
     return {"inline_keyboard": [
+        [{"text": "🔄 Проверить сейчас", "callback_data": f"wv:{item_id}"}],
         [{"text": "🗑 Удалить", "callback_data": f"wd:{item_id}"}],
         [{"text": "↩️ Назад", "callback_data": "watchlist"}],
     ]}
@@ -120,7 +121,7 @@ def watchlist_text() -> tuple[str, dict[str, Any]]:
     rows = watchlist_items(20)
     if not rows:
         return "🔔 Watchlist\n\nПока нет товаров.", menu_keyboard()
-    lines = ["🔔 Watchlist\n", "Выбери товар для управления:"]
+    lines = ["🔔 Watchlist", "", "Выбери товар для управления:"]
     for row in rows:
         price = row.get("last_price")
         price_text = f"{float(price):,.0f} ₽".replace(",", " ") if price is not None else "цена не указана"
@@ -143,6 +144,31 @@ def _watch_item(item_id: int) -> tuple[str, dict[str, Any]]:
             f"🕐 Обновлено: {row.get('updated_at') or 'неизвестно'}\n"
             f"🔗 {row.get('url') or 'ссылка отсутствует'}")
     return text, watch_item_keyboard(item_id)
+
+
+def _watch_verify_text(item_id: int) -> str:
+    result = verify_watchlist_item(item_id)
+    if not result.get("ok"):
+        return "❌ Товар не найден или уже удалён."
+    verification = result["verification"]
+    item = result["item"]
+    old_price = item.get("last_price")
+    new_price = verification.get("price")
+    if verification.get("verified"):
+        status = "🟢 Подтверждена"
+    elif verification.get("verification_status") == "needs_review":
+        status = "🟡 Требует проверки"
+    else:
+        status = "🔴 Не подтверждена"
+    old_text = f"{float(old_price):,.0f} ₽".replace(",", " ") if old_price is not None else "нет"
+    new_text = f"{float(new_price):,.0f} ₽".replace(",", " ") if new_price is not None else "не найдена"
+    return ("🔄 Проверка цены\n\n"
+            f"📦 {item.get('title') or 'Без названия'}\n"
+            f"💰 Было: {old_text}\n"
+            f"💰 Сейчас: {new_text}\n"
+            f"🔎 Статус: {status}\n"
+            f"🧪 Метод: {verification.get('verification_method', 'unknown')}\n"
+            f"🔗 {verification.get('final_url') or item.get('url')}")
 
 
 def sources_text() -> str:
@@ -210,6 +236,12 @@ def _handle_callback(chat_id: int, user_id: int, data: str) -> None:
             send_message(chat_id, text, keyboard)
         except ValueError:
             send_message(chat_id, "❌ Некорректный ID товара.", menu_keyboard())
+    elif data.startswith("wv:"):
+        try:
+            item_id = int(data.split(":", 1)[1])
+            send_message(chat_id, _watch_verify_text(item_id), watch_item_keyboard(item_id))
+        except (ValueError, Exception) as exc:
+            send_message(chat_id, f"❌ Проверка не выполнена: {type(exc).__name__}", menu_keyboard())
     elif data.startswith("wd:"):
         try:
             item_id = int(data.split(":", 1)[1])
