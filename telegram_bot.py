@@ -8,13 +8,13 @@ from typing import Any
 import requests
 
 from agent_router import build_plan
+from conversation_agent import chat as ai_chat
 
 TELEGRAM_API = "https://api.telegram.org/bot{token}/{method}"
 BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
 PARSER_BASE_URL = os.getenv("PARSER_PUBLIC_URL", "http://127.0.0.1:8010").rstrip("/")
 MAX_HISTORY = int(os.getenv("TELEGRAM_HISTORY_SIZE", "12"))
 TIMEOUT = float(os.getenv("TELEGRAM_TIMEOUT", "20"))
-
 _history: dict[int, deque[dict[str, str]]] = defaultdict(lambda: deque(maxlen=MAX_HISTORY))
 
 
@@ -46,29 +46,27 @@ def _remember(chat_id: int, role: str, text: str) -> None:
     _history[chat_id].append({"role": role, "content": text})
 
 
-def _context(chat_id: int) -> str:
-    return "\n".join(f"{m['role']}: {m['content']}" for m in _history[chat_id])
+def _context(chat_id: int) -> list[dict[str, str]]:
+    return list(_history[chat_id])
 
 
 def _search(chat_id: int, query: str) -> None:
     try:
-        plan = build_plan(query)
+        build_plan(query)
     except Exception:
-        plan = {"query": query}
+        pass
     try:
         response = requests.get(f"{PARSER_BASE_URL}/api/agent/search", params={"q": query, "limit": 8}, timeout=TIMEOUT)
         response.raise_for_status()
         data = response.json()
-    except Exception as exc:
-        send_message(chat_id, f"Я поняла, что нужно найти, но поиск сейчас недоступен. Попробуй ещё раз чуть позже.\n\nТехнически: {type(exc).__name__}")
+    except Exception:
+        send_message(chat_id, "Я поняла, что нужно найти, но поиск сейчас недоступен. Попробуй ещё раз чуть позже.", menu_keyboard())
         return
-
     items = data.get("items") or []
     if not items:
-        send_message(chat_id, "Пока не нашла подходящих вариантов. Можешь изменить бюджет, размер или описание товара.", menu_keyboard())
+        send_message(chat_id, "Пока не нашла подходящих вариантов. Можем изменить бюджет, размер или сам товар.", menu_keyboard())
         return
-
-    _remember(chat_id, "assistant", f"Найдены варианты по запросу: {query}")
+    _remember(chat_id, "assistant", f"Нашла варианты по запросу: {query}")
     send_message(chat_id, f"Нашла {len(items)} вариантов. Сначала показываю самые интересные 👇")
     for index, item in enumerate(items[:8], 1):
         title = str(item.get("title") or "Товар")
@@ -91,24 +89,18 @@ def handle_text(chat_id: int, text: str) -> None:
     if not text:
         return
     _remember(chat_id, "user", text)
-
     if text == "/start":
-        send_message(chat_id, "Привет! 👋 Я помощник «Мама, дешевле!».\n\nМожешь просто разговаривать со мной обычными словами. Я помогу разобраться, что нужно ребёнку, а когда понадобится — сама поищу лучшие цены в интернете.", menu_keyboard())
+        send_message(chat_id, "Привет! 👋 Я помощник «Мама, дешевле!». Можешь просто разговаривать со мной обычными словами. Я помогу разобраться, а когда понадобится — сама поищу лучшие цены в интернете.", menu_keyboard())
         return
     if text == "/help":
-        send_message(chat_id, "Просто напиши, что тебе нужно. Например: «Нужны кроссовки сыну 5 лет до 3000 рублей». Можно уточнять запрос прямо в разговоре.", menu_keyboard())
+        send_message(chat_id, "Просто пиши мне как человеку. Например: «Нужны кроссовки сыну 5 лет до 3000 рублей». Можно продолжать разговор и уточнять запрос.", menu_keyboard())
         return
-
-    lower = text.lower()
-    if lower in {"привет", "здравствуйте", "здравствуй", "добрый день", "доброе утро", "добрый вечер"}:
-        send_message(chat_id, "Привет! 😊 Рассказывай, что случилось или что нужно найти. Я рядом.", menu_keyboard())
-        return
-
     if _looks_like_search(text):
-        _search(chat_id, f"{_context(chat_id)}\nТекущий запрос: {text}")
+        _search(chat_id, "\n".join(f"{m['role']}: {m['content']}" for m in _context(chat_id)))
         return
-
-    send_message(chat_id, "Конечно 🙂 Давай разберёмся. Расскажи подробнее — я могу просто пообщаться, помочь сформулировать запрос или сама начать искать товар, когда пойму, что именно тебе нужно.", menu_keyboard())
+    reply = ai_chat(_context(chat_id))
+    _remember(chat_id, "assistant", reply)
+    send_message(chat_id, reply, menu_keyboard())
 
 
 def run_once(offset: int | None = None) -> int | None:
@@ -129,7 +121,7 @@ def run_once(offset: int | None = None) -> int | None:
             if chat_id:
                 data = callback.get("data")
                 if data == "search": send_message(chat_id, "🔎 Напиши обычными словами, что нужно найти.")
-                elif data == "photo": send_message(chat_id, "📸 Пришли фото товара. Следующим этапом подключим визуальный поиск.")
+                elif data == "photo": send_message(chat_id, "📸 Пришли фото товара — следующим этапом подключим визуальный AI-поиск.")
                 elif data == "chat": send_message(chat_id, "💬 Конечно. Просто пиши мне как обычному собеседнику — без команд.")
                 else: send_message(chat_id, "ℹ️ Просто расскажи, что тебе нужно. Я помогу разобраться.", menu_keyboard())
             continue
