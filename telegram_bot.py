@@ -21,6 +21,26 @@ _history: dict[int, deque[dict[str, str]]] = defaultdict(lambda: deque(maxlen=MA
 _last_results: dict[int, list[dict[str, Any]]] = defaultdict(list)
 init_watchlist_db()
 
+WELCOME_TEXT = (
+    "🛍 <b>Мама, дешевле!</b>\n\n"
+    "Я помогу найти детские товары по хорошей цене.\n\n"
+    "🔎 Ищу товары и сравниваю предложения\n"
+    "📸 Понимаю запрос по фото\n"
+    "💰 Помогаю искать дешевле\n"
+    "🔔 Могу следить за ценой и сообщить, если она снизится\n\n"
+    "Просто напиши, что нужно найти. Например:\n"
+    "<i>«Кроссовки мальчику 5 лет до 3000 ₽»</i>"
+)
+
+HELP_TEXT = (
+    "ℹ️ <b>Как пользоваться</b>\n\n"
+    "🔎 <b>Найти дешевле</b> — напиши товар, возраст/размер и бюджет.\n"
+    "📸 <b>По фото</b> — пришли фотографию товара.\n"
+    "🔔 <b>Мои товары</b> — здесь будут товары, за которыми я слежу.\n"
+    "💬 <b>Просто поговорить</b> — можно уточнить запрос обычными словами.\n\n"
+    "💡 Чем точнее запрос, тем лучше результат: товар + размер/возраст + бюджет."
+)
+
 
 def enabled() -> bool:
     return bool(BOT_TOKEN)
@@ -36,14 +56,18 @@ def _api(method: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
 
 
 def send_message(chat_id: int, text: str, reply_markup: dict[str, Any] | None = None) -> None:
-    payload: dict[str, Any] = {"chat_id": chat_id, "text": text, "disable_web_page_preview": False}
+    payload: dict[str, Any] = {"chat_id": chat_id, "text": text, "parse_mode": "HTML", "disable_web_page_preview": False}
     if reply_markup:
         payload["reply_markup"] = reply_markup
     _api("sendMessage", payload)
 
 
 def menu_keyboard() -> dict[str, Any]:
-    return {"inline_keyboard": [[{"text": "🔎 Найти дешевле", "callback_data": "search"}, {"text": "📸 По фото", "callback_data": "photo"}], [{"text": "💬 Просто поговорить", "callback_data": "chat"}, {"text": "🔔 Мои товары", "callback_data": "watchlist"}], [{"text": "ℹ️ Помощь", "callback_data": "help"}]]}
+    return {"inline_keyboard": [[{"text": "🔎 Найти товар", "callback_data": "search"}, {"text": "📸 По фото", "callback_data": "photo"}], [{"text": "💰 Найти дешевле", "callback_data": "cheaper_menu"}, {"text": "🔔 Мои товары", "callback_data": "watchlist"}], [{"text": "💬 Спросить AI", "callback_data": "chat"}, {"text": "ℹ️ Помощь", "callback_data": "help"}]]}
+
+
+def back_keyboard() -> dict[str, Any]:
+    return {"inline_keyboard": [[{"text": "🏠 Главное меню", "callback_data": "home"}]]}
 
 
 def deal_keyboard(item: dict[str, Any], index: int) -> dict[str, Any]:
@@ -52,7 +76,7 @@ def deal_keyboard(item: dict[str, Any], index: int) -> dict[str, Any]:
     if isinstance(url, str) and url.startswith(("http://", "https://")):
         rows.append([{"text": "🛒 Купить", "url": url}])
     rows.append([{"text": "💰 Найти дешевле", "callback_data": f"cheaper:{index}"}, {"text": "🔄 Проверить", "callback_data": f"refresh:{index}"}])
-    rows.append([{"text": "🔔 Следить", "callback_data": f"watch:{index}"}])
+    rows.append([{"text": "🔔 Следить за ценой", "callback_data": f"watch:{index}"}])
     return {"inline_keyboard": rows}
 
 
@@ -73,23 +97,23 @@ def _format_price(value: Any) -> str:
 def _show_watchlist(chat_id: int) -> None:
     items = list_for_chat(chat_id)
     if not items:
-        send_message(chat_id, "🔔 Ты пока ничего не отслеживаешь. Нажми «🔔 Следить» у любого найденного товара.", menu_keyboard())
+        send_message(chat_id, "🔔 <b>Здесь пока пусто</b>\n\nНайди товар и нажми «🔔 Следить за ценой». Я сообщу, когда цена заметно снизится.", menu_keyboard())
         return
-    send_message(chat_id, f"🔔 Отслеживаю товаров: {len(items)}")
+    send_message(chat_id, f"🔔 <b>Мои товары</b>\n\nСейчас отслеживаю: <b>{len(items)}</b>")
     for item in items:
         price = _format_price(item.get("last_price"))
-        text = f"• {item['title']}\n💰 Последняя цена: {price}"
+        text = f"🧸 <b>{item['title']}</b>\n💰 Последняя цена: <b>{price}</b>"
         if item.get("source"):
             text += f"\n🏪 {item['source']}"
         rows = []
         if item.get("url", "").startswith(("http://", "https://")):
-            rows.append([{"text": "🛒 Открыть", "url": item["url"]}])
+            rows.append([{"text": "🛒 Открыть товар", "url": item["url"]}])
         rows.append([{"text": "❌ Не следить", "callback_data": f"unwatch:{item['item_key']}"}])
         send_message(chat_id, text, {"inline_keyboard": rows})
+    send_message(chat_id, "Что хочешь сделать дальше?", menu_keyboard())
 
 
 def _extract_search_items(data: dict[str, Any]) -> list[dict[str, Any]]:
-    """Normalize the two supported search endpoint response shapes."""
     items = data.get("items") or data.get("confirmed") or []
     if not isinstance(items, list):
         return []
@@ -101,15 +125,7 @@ def _search(chat_id: int, query: str) -> None:
         build_plan(query)
     except Exception:
         pass
-
-    # Prefer the full multi-agent endpoint: marketplace adapters + web research
-    # + catalog + matcher + ranking. Keep child-search as a compatibility
-    # fallback so Telegram remains useful if an upstream route is temporarily
-    # unavailable.
-    endpoints = [
-        ("/api/agent/search", {"q": query, "limit": 8}),
-        ("/api/child-search", {"q": query, "limit": 8}),
-    ]
+    endpoints = [("/api/agent/search", {"q": query, "limit": 8}), ("/api/child-search", {"q": query, "limit": 8})]
     data: dict[str, Any] | None = None
     errors: list[str] = []
     for path, params in endpoints:
@@ -123,32 +139,28 @@ def _search(chat_id: int, query: str) -> None:
             errors.append(f"{path}: no results")
         except Exception as exc:
             errors.append(f"{path}: {exc}")
-
     if data is None:
         print(f"Telegram search unavailable: {'; '.join(errors)}", flush=True)
-        send_message(chat_id, "Я поняла, что нужно найти, но поиск сейчас недоступен. Попробуй ещё раз чуть позже.", menu_keyboard())
+        send_message(chat_id, "😔 <b>Поиск сейчас недоступен</b>\n\nПопробуй ещё раз немного позже.", menu_keyboard())
         return
-
     items = _extract_search_items(data)
     if not items:
-        send_message(chat_id, "Пока не нашла подходящих вариантов. Можем изменить бюджет, размер или сам товар.", menu_keyboard())
+        send_message(chat_id, "🔎 <b>Подходящих вариантов пока не нашла</b>\n\nПопробуй изменить бюджет, размер или описание товара.", menu_keyboard())
         return
-
     _last_results[chat_id] = items[:8]
     _remember(chat_id, "assistant", f"Нашла варианты по запросу: {query}")
-    send_message(chat_id, f"Нашла {len(_last_results[chat_id])} вариантов и сравнила предложения. Сначала показываю лучшие 👇")
+    send_message(chat_id, f"🎉 <b>Нашла {len(_last_results[chat_id])} вариантов</b>\n\nСначала показываю наиболее подходящие 👇")
     for index, item in enumerate(_last_results[chat_id], 1):
         title = str(item.get("title") or "Товар")
         price = item.get("lowest_price", item.get("price"))
         source = item.get("source") or item.get("marketplace") or "магазин"
-        text = f"{index}. {title}\n💰 {_format_price(price)}\n🏪 {source}"
+        text = f"<b>{index}. {title}</b>\n💰 <b>{_format_price(price)}</b>\n🏪 {source}"
         if item.get("old_price") and isinstance(item.get("old_price"), (int, float)):
             text += f"\n🏷 Было: {_format_price(item['old_price'])}"
         if item.get("offer_count"):
             text += f"\n📊 Предложений: {item['offer_count']}"
-        if item.get("match_group"):
-            text += "\n🔎 Сравнение предложений включено"
         send_message(chat_id, text, deal_keyboard(item, index - 1))
+    send_message(chat_id, "Можно купить, поискать дешевле или включить 🔔 отслеживание.", menu_keyboard())
 
 
 def _rerun_deal_action(chat_id: int, index: int, mode: str) -> None:
@@ -158,24 +170,28 @@ def _rerun_deal_action(chat_id: int, index: int, mode: str) -> None:
         return
     title = str(results[index].get("title") or "товар")
     if mode == "cheaper":
-        send_message(chat_id, "💰 Ищу это же или максимально похожее предложение дешевле…")
+        send_message(chat_id, "💰 <b>Ищу дешевле…</b>\nСравниваю доступные предложения.")
         _search(chat_id, f"найди дешевле: {title}")
     else:
-        send_message(chat_id, "🔄 Проверяю актуальные предложения и цену…")
+        send_message(chat_id, "🔄 <b>Проверяю цену…</b>\nИщу актуальные предложения.")
         _search(chat_id, title)
 
 
 def _handle_callback(chat_id: int, data: str) -> None:
-    if data == "search":
-        send_message(chat_id, "🔎 Напиши обычными словами, что нужно найти.")
+    if data in {"home", "start"}:
+        send_message(chat_id, WELCOME_TEXT, menu_keyboard())
+    elif data == "search":
+        send_message(chat_id, "🔎 <b>Что ищем?</b>\n\nНапиши товар, размер/возраст и бюджет.\nНапример: «Зимняя куртка девочке 6 лет до 5000 ₽»", back_keyboard())
     elif data == "photo":
-        send_message(chat_id, "📸 Пришли фото товара, и я попробую найти его или похожие варианты.")
+        send_message(chat_id, "📸 <b>Пришли фото товара</b>\n\nЯ попробую определить его и найти такой же или похожие варианты.", back_keyboard())
     elif data == "chat":
-        send_message(chat_id, "💬 Конечно. Просто пиши мне как обычному собеседнику — без команд.")
+        send_message(chat_id, "💬 <b>Я слушаю</b>\n\nПиши вопрос обычными словами — помогу уточнить поиск или подобрать варианты.", back_keyboard())
+    elif data == "cheaper_menu":
+        send_message(chat_id, "💰 <b>Найти дешевле</b>\n\nНапиши, какой товар хочешь купить, и я попробую найти более выгодные предложения.", back_keyboard())
     elif data == "watchlist":
         _show_watchlist(chat_id)
     elif data == "help":
-        send_message(chat_id, "ℹ️ Можно писать обычным языком, присылать фото и уточнять поиск прямо в диалоге.", menu_keyboard())
+        send_message(chat_id, HELP_TEXT, back_keyboard())
     elif data.startswith("cheaper:"):
         _rerun_deal_action(chat_id, int(data.split(":", 1)[1]), "cheaper")
     elif data.startswith("refresh:"):
@@ -185,17 +201,17 @@ def _handle_callback(chat_id: int, data: str) -> None:
         results = _last_results.get(chat_id, [])
         if 0 <= index < len(results):
             add_watch(chat_id, results[index])
-            send_message(chat_id, "🔔 Готово. Товар сохранён в постоянном списке отслеживания.", menu_keyboard())
+            send_message(chat_id, "🔔 <b>Готово!</b>\n\nЯ буду следить за ценой этого товара и сообщу о заметном снижении.", menu_keyboard())
         else:
-            send_message(chat_id, "Этот результат уже устарел. Сделай новый поиск.")
+            send_message(chat_id, "Этот результат уже устарел. Сделай новый поиск.", menu_keyboard())
     elif data.startswith("unwatch:"):
         key = data.split(":", 1)[1]
         if remove_watch(chat_id, key):
-            send_message(chat_id, "❌ Убрала товар из отслеживания.", menu_keyboard())
+            send_message(chat_id, "❌ Товар убран из отслеживания.", menu_keyboard())
         else:
             send_message(chat_id, "Этот товар уже не отслеживается.", menu_keyboard())
     else:
-        send_message(chat_id, "Не поняла действие. Давай сделаем новый поиск.", menu_keyboard())
+        send_message(chat_id, "Не поняла действие. Открой главное меню и попробуй ещё раз.", menu_keyboard())
 
 
 def _looks_like_search(text: str) -> bool:
@@ -207,11 +223,11 @@ def handle_text(chat_id: int, text: str) -> None:
     if not text:
         return
     _remember(chat_id, "user", text)
-    if text == "/start":
-        send_message(chat_id, "Привет! 👋 Я помощник «Мама, дешевле!». Можешь разговаривать со мной обычными словами, присылать фото и просить найти лучшую цену.", menu_keyboard())
+    if text in {"/start", "/menu"}:
+        send_message(chat_id, WELCOME_TEXT, menu_keyboard())
         return
     if text == "/help":
-        send_message(chat_id, "Просто пиши мне как человеку. Например: «Нужны кроссовки сыну 5 лет до 3000 рублей». Можно продолжать разговор и уточнять запрос.", menu_keyboard())
+        send_message(chat_id, HELP_TEXT, menu_keyboard())
         return
     if text in {"/watchlist", "мои товары", "отслеживаемые товары"}:
         _show_watchlist(chat_id)
