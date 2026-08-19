@@ -1,10 +1,12 @@
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
 from fastapi import FastAPI, HTTPException, Query
 from normalizer import normalize_product
 from resilient_provider_engine import search_sources
 from providers import PROVIDERS
 from source_registry import source_status
 
-app = FastAPI(title="Marketplace Parser Feed Engine", version="0.9.1")
+app = FastAPI(title="Marketplace Parser Feed Engine", version="0.9.2")
 
 @app.get("/")
 def root():
@@ -41,19 +43,48 @@ def ai_plan(q: str = Query(min_length=1, max_length=500)):
 def agent_search(q: str = Query(min_length=1, max_length=500), limit: int = Query(default=20, ge=1, le=50)):
     from agent_router import build_plan, expand_queries, resolve_sources
     from deal_ranker import rank_items
-    plan = build_plan(q.strip())
+
+    query_text = q.strip()
+    plan = build_plan(query_text)
     requested = [str(x) for x in plan.get("marketplaces", [])]
     sources = resolve_sources(requested)
-    queries = expand_queries(plan, q.strip())
-    runs = [search_sources(query, max(1, min(limit, 20)), sources or None) for query in queries]
+    queries = expand_queries(plan, query_text)
+
+    # Search query variants concurrently; each variant also fans out across sources.
+    max_workers = max(1, min(len(queries), int(__import__("os").getenv("QUERY_SEARCH_WORKERS", str(len(queries))))))
+    runs_by_query: dict[str, dict] = {}
+    with ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="query") as executor:
+        futures = {executor.submit(search_sources, query, max(1, min(limit, 20)), sources or None): query for query in queries}
+        for future in as_completed(futures):
+            query = futures[future]
+            try:
+                runs_by_query[query] = future.result()
+            except Exception as exc:
+                runs_by_query[query] = {"query": query, "count": 0, "items": [], "sources": [], "ready": False, "error": str(exc)}
+
+    runs = [runs_by_query.get(query, {"query": query, "count": 0, "items": [], "sources": []}) for query in queries]
     collected: list[dict] = []
     for run in runs:
         collected.extend(run.get("items", []))
+
     max_price = plan.get("max_price")
     if isinstance(max_price, (int, float)):
         collected = [x for x in collected if isinstance(x.get("price"), (int, float)) and x["price"] <= max_price]
+
     items = rank_items(collected, plan, limit)
-    return {"query": q.strip(), "count": len(items), "items": items, "queries": queries, "ai_plan": plan, "requested_sources": requested, "resolved_sources": sources, "agent": "multi-agent-router", "runs": [{"query": r.get("query"), "count": r.get("count"), "sources": r.get("sources", [])} for r in runs], "ready": bool(items)}
+    return {
+        "query": query_text,
+        "count": len(items),
+        "items": items,
+        "queries": queries,
+        "ai_plan": plan,
+        "requested_sources": requested,
+        "resolved_sources": sources,
+        "agent": "multi-agent-router",
+        "parallel": {"queries": len(queries), "sources_per_query": len(sources)},
+        "runs": [{"query": r.get("query"), "count": r.get("count"), "sources": r.get("sources", []), "error": r.get("error")} for r in runs],
+        "ready": bool(items),
+    }
 
 @app.get("/api/search")
 def search(q: str = Query(min_length=1, max_length=300), limit: int = Query(default=20, ge=1, le=100), source: str | None = Query(default=None)):
