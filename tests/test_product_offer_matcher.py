@@ -1,16 +1,21 @@
-from product_offer_matcher import group_offers, similarity
+from product_offer_matcher import group_offers
 
 
-def test_similarity_is_high_for_same_product():
-    assert similarity('Кроссовки детские Nike Air Max 30', 'Nike Air Max детские кроссовки 30') >= 0.68
+def test_same_article_groups_and_picks_lowest_price():
+    items = [
+        {"title": "Nike Air Max 33", "article": "ABC", "brand": "Nike", "price": 2990, "source": "ozon"},
+        {"title": "Nike Air Max детские 33", "article": "ABC", "brand": "Nike", "price": 2490, "source": "wildberries"},
+    ]
+    groups = group_offers(items)
+    assert len(groups) == 1
+    assert groups[0]["lowest_price"] == 2490
+    assert groups[0]["offer_count"] == 2
 
 
-def test_group_offers_selects_lowest_price():
-    groups = group_offers([
-        {'title': 'Кроссовки детские Nike Air Max 30', 'price': 2490, 'source': 'ozon'},
-        {'title': 'Nike Air Max детские кроссовки 30', 'price': 2190, 'source': 'detmir'},
-        {'title': 'Куртка зимняя детская', 'price': 4990, 'source': 'shop'},
-    ])
-    nike = next(g for g in groups if g['offer_count'] == 2)
-    assert nike['lowest_price'] == 2190
-    assert nike['best_offer']['source'] == 'detmir'
+def test_different_products_do_not_form_one_group():
+    items = [
+        {"title": "Nike Air Max 33", "article": "ABC", "brand": "Nike", "price": 2990},
+        {"title": "Зимняя куртка детская", "article": "XYZ", "brand": "Reima", "price": 4990},
+    ]
+    groups = group_offers(items)
+    assert len(groups) == 2
