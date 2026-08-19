@@ -9,7 +9,7 @@ from source_registry import source_status
 from source_discovery import discover_sources
 from catalog_store import init_db, search_catalog, stats as catalog_stats, upsert_products
 
-app = FastAPI(title="Marketplace Parser Feed Engine", version="0.17.0")
+app = FastAPI(title="Marketplace Parser Feed Engine", version="0.18.0")
 init_db()
 
 @app.get("/")
