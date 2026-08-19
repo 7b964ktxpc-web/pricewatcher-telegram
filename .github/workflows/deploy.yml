@@ -19,6 +19,8 @@ jobs:
           ssh-keyscan -H '${{ secrets.TIMEWEB_HOST }}' >> ~/.ssh/known_hosts
 
       - name: Deploy and verify
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
         run: |
           ssh '${{ secrets.TIMEWEB_USER }}@${{ secrets.TIMEWEB_HOST }}' 'set -e
             mkdir -p /opt/marketplace-parser/repo
@@ -31,7 +33,15 @@ jobs:
               git clone --branch main https://github.com/7b964ktxpc-web/pricewatcher-telegram.git .
             fi
 
-            docker compose up -d --build --remove-orphans
+            if [ -n "$TELEGRAM_BOT_TOKEN" ]; then
+              printf "TELEGRAM_BOT_TOKEN=%s\\n" "$TELEGRAM_BOT_TOKEN" > .env.telegram
+              chmod 600 .env.telegram
+            else
+              rm -f .env.telegram
+              echo "WARNING: TELEGRAM_BOT_TOKEN secret is not configured; Telegram bot will remain stopped/unusable."
+            fi
+
+            docker compose --env-file .env.telegram up -d --build --remove-orphans
 
             echo "=== CONTAINERS ==="
             docker compose ps
