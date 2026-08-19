@@ -17,7 +17,7 @@ class FeedAdapter:
     or JSON catalog export.
     """
 
-    def __init__(self, name: str, marketplace: str, env_name: str):
+    def __init__(self, name: str, marketplace: str | None, env_name: str):
         self.name = name
         self.marketplace = marketplace
         self.env_name = env_name
@@ -90,4 +90,7 @@ FEED_ADAPTERS = {
     "ozon_feed": FeedAdapter("ozon-feed", "ozon", "OZON_FEED_URL"),
     "yandex_market_feed": FeedAdapter("yandex-market-feed", "yandex_market", "YANDEX_MARKET_FEED_URL"),
     "simaland_feed": FeedAdapter("simaland-feed", "simaland", "SIMALAND_FEED_URL"),
+    "detmir_feed": FeedAdapter("detmir-feed", None, "DETMIR_FEED_URL"),
+    "akusherstvo_feed": FeedAdapter("akusherstvo-feed", None, "AKUSHERSTVO_FEED_URL"),
+    "korablik_feed": FeedAdapter("korablik-feed", None, "KORABLIK_FEED_URL"),
 }
