@@ -1,4 +1,4 @@
-from telegram_bot import _looks_like_search, menu_keyboard
+from telegram_bot import _looks_like_search, deal_keyboard, menu_keyboard
 from telegram_photo_search import _extract
 
 
@@ -16,6 +16,16 @@ def test_menu_has_live_conversation_and_search_buttons():
     assert "🔎 Найти дешевле" in labels
     assert "💬 Просто поговорить" in labels
     assert "📸 По фото" in labels
+
+
+def test_deal_keyboard_has_buy_cheaper_refresh_and_watch_actions():
+    keyboard = deal_keyboard({"url": "https://example.com/item"}, 0)["inline_keyboard"]
+    labels = [button["text"] for row in keyboard for button in row]
+    assert "🛒 Купить" in labels
+    assert "💰 Найти дешевле" in labels
+    assert "🔄 Проверить" in labels
+    assert "🔔 Следить" in labels
+    assert keyboard[0][0]["url"] == "https://example.com/item"
 
 
 def test_photo_description_extracts_structured_query():
