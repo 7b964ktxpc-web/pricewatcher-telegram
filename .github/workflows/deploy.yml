@@ -1,0 +1,20 @@
+name: Deploy to Timeweb
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure SSH
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' '${{ secrets.TIMEWEB_SSH_KEY }}' > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keyscan -H '${{ secrets.TIMEWEB_HOST }}' >> ~/.ssh/known_hosts
+      - name: Deploy
+        run: |
+          ssh '${{ secrets.TIMEWEB_USER }}@${{ secrets.TIMEWEB_HOST }}' 'set -e; mkdir -p /opt/marketplace-parser/repo; cd /opt/marketplace-parser/repo; if [ -d .git ]; then git fetch origin main; git reset --hard origin/main; else git clone --branch main https://github.com/7b964ktxpc-web/pricewatcher-telegram.git .; fi; docker compose up -d --build --remove-orphans; curl -fsS http://127.0.0.1:8010/health'
