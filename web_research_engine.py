@@ -5,49 +5,33 @@ import os
 import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any
-from urllib.parse import parse_qs, unquote, urljoin, urlparse
+from urllib.parse import parse_qs, unquote, urlparse
 
 import requests
 
-USER_AGENT = os.getenv(
-    "WEB_RESEARCH_USER_AGENT",
-    "Mozilla/5.0 (compatible; MamaDezhevleResearch/1.0; +https://github.com/7b964ktxpc-web/pricewatcher-telegram)",
-)
+USER_AGENT = os.getenv("WEB_RESEARCH_USER_AGENT", "Mozilla/5.0 (compatible; MamaDezhevleResearch/1.0)")
 TIMEOUT = float(os.getenv("WEB_RESEARCH_TIMEOUT", "10"))
 MAX_PAGE_CHARS = int(os.getenv("WEB_RESEARCH_MAX_PAGE_CHARS", "30000"))
-
-# Search discovery is deliberately separate from marketplace APIs. APIs/feeds can
-# enrich results when available, but web discovery remains useful when they are not.
+MAX_RAW_HTML_CHARS = int(os.getenv("WEB_RESEARCH_MAX_RAW_HTML_CHARS", "60000"))
 SEARCH_ENGINES = {
     "duckduckgo": "https://html.duckduckgo.com/html/?q={query}",
     "bing": "https://www.bing.com/search?q={query}",
 }
-
 TRUSTED_DEAL_DOMAINS = {"pepper.ru", "pepper.com"}
 MARKETPLACE_DOMAINS = {
-    "wildberries.ru": "wildberries",
-    "ozon.ru": "ozon",
-    "market.yandex.ru": "yandex_market",
-    "sima-land.ru": "simaland",
-    "detmir.ru": "detmir",
-    "akusherstvo.ru": "akusherstvo",
-    "korablik.ru": "korablik",
+    "wildberries.ru": "wildberries", "ozon.ru": "ozon", "market.yandex.ru": "yandex_market",
+    "sima-land.ru": "simaland", "detmir.ru": "detmir", "akusherstvo.ru": "akusherstvo", "korablik.ru": "korablik",
 }
 
 
 def _headers() -> dict[str, str]:
-    return {
-        "User-Agent": USER_AGENT,
-        "Accept": "text/html,application/xhtml+xml,application/json;q=0.9,*/*;q=0.8",
-        "Accept-Language": "ru-RU,ru;q=0.9,en;q=0.5",
-    }
+    return {"User-Agent": USER_AGENT, "Accept": "text/html,application/xhtml+xml,application/json;q=0.9,*/*;q=0.8", "Accept-Language": "ru-RU,ru;q=0.9,en;q=0.5"}
 
 
 def _clean_text(value: str) -> str:
     value = re.sub(r"<script[\s\S]*?</script>|<style[\s\S]*?</style>", " ", value, flags=re.I)
     value = re.sub(r"<[^>]+>", " ", value)
-    value = html.unescape(value)
-    return re.sub(r"\s+", " ", value).strip()
+    return re.sub(r"\s+", " ", html.unescape(value)).strip()
 
 
 def _unwrap_url(url: str) -> str:
@@ -82,57 +66,33 @@ def search_engine(query: str, engine: str = "duckduckgo", limit: int = 10) -> li
         r.raise_for_status()
     except requests.RequestException as exc:
         return [{"engine": engine, "query": query, "error": str(exc)}]
-
     found: list[dict[str, Any]] = []
     if engine == "duckduckgo":
         pattern = re.compile(r'<a[^>]+class="result__a"[^>]+href="([^"]+)"[^>]*>(.*?)</a>', re.I | re.S)
-        for url, title in pattern.findall(r.text):
-            url = _unwrap_url(html.unescape(url))
-            title = _clean_text(title)
-            if url.startswith("http") and title:
-                found.append({"engine": engine, "title": title, "url": url, "source": _source_for(url)})
     else:
         pattern = re.compile(r'<li[^>]*class="b_algo"[\s\S]*?<h2>\s*<a[^>]+href="([^"]+)"[^>]*>(.*?)</a>', re.I)
-        for url, title in pattern.findall(r.text):
-            url = html.unescape(url)
-            title = _clean_text(title)
-            if url.startswith("http") and title:
-                found.append({"engine": engine, "title": title, "url": url, "source": _source_for(url)})
+    for url, title in pattern.findall(r.text):
+        url = _unwrap_url(html.unescape(url))
+        title = _clean_text(title)
+        if url.startswith("http") and title:
+            found.append({"engine": engine, "title": title, "url": url, "source": _source_for(url)})
     return found[:limit]
 
 
 def discover(query: str, limit: int = 8) -> dict[str, Any]:
-    queries = [
-        query,
-        f"{query} купить цена",
-        f"{query} скидка акция",
-        f"{query} site:pepper.ru",
-    ]
+    queries = [query, f"{query} купить цена", f"{query} скидка акция", f"{query} site:pepper.ru"]
     results: list[dict[str, Any]] = []
     errors: list[dict[str, Any]] = []
     with ThreadPoolExecutor(max_workers=4, thread_name_prefix="web-search") as executor:
         futures = [executor.submit(search_engine, q, "duckduckgo", limit) for q in queries]
         for future in as_completed(futures):
             for item in future.result():
-                if item.get("error"):
-                    errors.append(item)
-                else:
-                    results.append(item)
-
+                (errors if item.get("error") else results).append(item)
     dedup: dict[str, dict[str, Any]] = {}
     for item in results:
-        url = item["url"].split("#", 1)[0]
-        dedup.setdefault(url, item)
-
+        dedup.setdefault(item["url"].split("#", 1)[0], item)
     items = list(dedup.values())
-    return {
-        "query": query,
-        "count": len(items),
-        "items": items[: max(1, limit)],
-        "queries": queries,
-        "engines": ["duckduckgo"],
-        "errors": errors,
-    }
+    return {"query": query, "count": len(items), "items": items[:max(1, limit)], "queries": queries, "engines": ["duckduckgo"], "errors": errors}
 
 
 def fetch_page(url: str) -> dict[str, Any]:
@@ -144,17 +104,9 @@ def fetch_page(url: str) -> dict[str, Any]:
         content_type = r.headers.get("content-type", "")
         if "text/html" not in content_type and "application/xhtml" not in content_type:
             return {"url": url, "final_url": r.url, "ok": r.ok, "status": r.status_code, "content_type": content_type, "text": ""}
-        text = _clean_text(r.text)[:MAX_PAGE_CHARS]
-        return {
-            "url": url,
-            "final_url": r.url,
-            "ok": r.ok,
-            "status": r.status_code,
-            "content_type": content_type,
-            "source": _source_for(r.url),
-            "title": _page_title(r.text),
-            "text": text,
-        }
+        raw_html = r.text[:MAX_RAW_HTML_CHARS]
+        return {"url": url, "final_url": r.url, "ok": r.ok, "status": r.status_code, "content_type": content_type,
+                "source": _source_for(r.url), "title": _page_title(raw_html), "text": _clean_text(raw_html)[:MAX_PAGE_CHARS], "raw_html": raw_html}
     except requests.RequestException as exc:
         return {"url": url, "ok": False, "error": str(exc), "source": _source_for(url)}
 
