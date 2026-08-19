@@ -9,7 +9,7 @@ from source_registry import source_status
 from source_discovery import discover_sources
 from catalog_store import init_db, search_catalog, stats as catalog_stats, upsert_products
 
-app = FastAPI(title="Marketplace Parser Feed Engine", version="0.19.0")
+app = FastAPI(title="Marketplace Parser Feed Engine", version="0.20.0")
 init_db()
 
 @app.get("/")
@@ -34,6 +34,7 @@ def connections():
     """Safe connection dashboard: exposes configuration state, never credentials."""
     from marketplace_adapters import adapter_status
     from feed_adapter_manager import inspect_feeds
+    from conversation_agent import status as chat_status
     adapters = adapter_status()
     feeds = inspect_feeds()
     return {
@@ -44,8 +45,36 @@ def connections():
             "groq_configured": bool(os.getenv("GROQ_API_KEY")),
             "gemini_configured": bool(os.getenv("GEMINI_API_KEY")),
             "deepseek_configured": bool(os.getenv("DEEPSEEK_API_KEY")),
+            "chat": chat_status(),
         },
         "telegram": {"token_configured": bool(os.getenv("TELEGRAM_BOT_TOKEN"))},
+    }
+
+@app.get("/api/readiness")
+def readiness():
+    """Deployment-safe readiness report for the main integrations.
+
+    This endpoint never makes paid AI calls and never returns credentials.
+    It tells the deployment/operator which connection blocks are configured.
+    """
+    from marketplace_adapters import adapter_status
+    from feed_adapter_manager import inspect_feeds
+    from conversation_agent import status as chat_status
+
+    adapters = adapter_status()
+    feeds = inspect_feeds()
+    ai = chat_status()
+    configured_marketplaces = sum(1 for item in adapters if item.get("configured"))
+    configured_feeds = sum(1 for item in feeds if item.get("configured"))
+    ai_ready = bool(ai.get("qwen") or ai.get("deepseek_configured") or ai.get("groq_configured") or ai.get("gemini_configured"))
+    telegram_ready = bool(os.getenv("TELEGRAM_BOT_TOKEN"))
+    return {
+        "ready": bool(telegram_ready and ai_ready),
+        "telegram": {"configured": telegram_ready},
+        "ai": {"ready": ai_ready, "providers": ai.get("providers", [])},
+        "marketplaces": {"configured": configured_marketplaces, "total": len(adapters), "items": adapters},
+        "feeds": {"configured": configured_feeds, "total": len(feeds), "items": feeds},
+        "next": "connect at least one marketplace/feed for real product data" if configured_marketplaces + configured_feeds == 0 else "run a real Telegram search",
     }
 
 @app.get("/api/discovery")
@@ -84,7 +113,8 @@ def source_health():
 def ai_status():
     from ai_agent import agent_status
     from agent_router import router_status
-    return {"qwen": agent_status(), "router": router_status()}
+    from conversation_agent import status as chat_status
+    return {"qwen": agent_status(), "router": router_status(), "chat": chat_status()}
 
 @app.get("/api/ai/plan")
 def ai_plan(q: str = Query(min_length=1, max_length=500)):
