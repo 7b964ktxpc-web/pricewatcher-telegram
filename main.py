@@ -4,7 +4,7 @@ from provider_engine import search_sources
 from providers import PROVIDERS
 from source_registry import source_status
 
-app = FastAPI(title="Marketplace Parser Feed Engine", version="0.7.0")
+app = FastAPI(title="Marketplace Parser Feed Engine", version="0.8.0")
 
 @app.get("/")
 def root():
@@ -47,14 +47,15 @@ def ai_plan(q: str = Query(min_length=1, max_length=500)):
 
 @app.get("/api/agent/search")
 def agent_search(q: str = Query(min_length=1, max_length=500), limit: int = Query(default=20, ge=1, le=50)):
-    """Multi-agent query planning + bounded source search + deterministic deal ranking."""
-    from agent_router import build_plan, expand_queries
+    """Multi-agent planning + bounded source search + deterministic deal ranking."""
+    from agent_router import build_plan, expand_queries, resolve_sources
     from deal_ranker import rank_items
 
     plan = build_plan(q.strip())
-    marketplaces = [str(x) for x in plan.get("marketplaces", []) if x in {"wildberries", "ozon", "yandex_market", "simaland"}]
+    requested = [str(x) for x in plan.get("marketplaces", [])]
+    sources = resolve_sources(requested)
     queries = expand_queries(plan, q.strip())
-    runs = [search_sources(query, max(1, min(limit, 20)), marketplaces or None) for query in queries]
+    runs = [search_sources(query, max(1, min(limit, 20)), sources or None) for query in queries]
 
     collected: list[dict] = []
     for run in runs:
@@ -71,6 +72,8 @@ def agent_search(q: str = Query(min_length=1, max_length=500), limit: int = Quer
         "items": items,
         "queries": queries,
         "ai_plan": plan,
+        "requested_sources": requested,
+        "resolved_sources": sources,
         "agent": "multi-agent-router",
         "runs": [{"query": r.get("query"), "count": r.get("count"), "sources": r.get("sources", [])} for r in runs],
         "ready": bool(items),
@@ -79,7 +82,7 @@ def agent_search(q: str = Query(min_length=1, max_length=500), limit: int = Quer
 @app.get("/api/search")
 def search(q: str = Query(min_length=1, max_length=300), limit: int = Query(default=20, ge=1, le=100), source: str | None = Query(default=None)):
     selected = [source] if source else None
-    allowed = {"wildberries", "ozon", "yandex_market", "simaland", *PROVIDERS}
+    allowed = set(PROVIDERS)
     if source and source not in allowed:
         raise HTTPException(400, f"Unknown source: {source}")
     return search_sources(q.strip(), limit, selected)
