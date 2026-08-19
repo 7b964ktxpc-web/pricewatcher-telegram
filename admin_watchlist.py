@@ -13,6 +13,10 @@ def _connect() -> sqlite3.Connection:
     return conn
 
 
+def _columns(conn: sqlite3.Connection) -> set[str]:
+    return {str(row[1]) for row in conn.execute("PRAGMA table_info(watchlist)").fetchall()}
+
+
 def items(limit: int = 20) -> list[dict[str, Any]]:
     with _connect() as conn:
         rows = conn.execute("SELECT rowid AS id, chat_id, title, url, last_price, source, updated_at FROM watchlist ORDER BY updated_at DESC LIMIT ?", (limit,)).fetchall()
@@ -21,8 +25,16 @@ def items(limit: int = 20) -> list[dict[str, Any]]:
 
 def get(item_id: int) -> dict[str, Any] | None:
     with _connect() as conn:
-        row = conn.execute("SELECT rowid AS id, chat_id, item_key, title, url, last_price, source, updated_at FROM watchlist WHERE rowid = ?", (item_id,)).fetchone()
-    return dict(row) if row else None
+        columns = _columns(conn)
+        if "item_key" in columns:
+            row = conn.execute("SELECT rowid AS id, chat_id, item_key, title, url, last_price, source, updated_at FROM watchlist WHERE rowid = ?", (item_id,)).fetchone()
+        else:
+            row = conn.execute("SELECT rowid AS id, chat_id, title, url, last_price, source, updated_at FROM watchlist WHERE rowid = ?", (item_id,)).fetchone()
+    if not row:
+        return None
+    item = dict(row)
+    item.setdefault("item_key", str(item.get("url") or item.get("title") or ""))
+    return item
 
 
 def remove(item_id: int) -> bool:
