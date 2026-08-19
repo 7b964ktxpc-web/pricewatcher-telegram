@@ -47,6 +47,7 @@ def test_readiness():
     assert "ready" in body
     assert "telegram" in body
     assert "ai" in body
+    assert "web_research" in body
     assert "marketplaces" in body
     assert "feeds" in body
 
@@ -54,3 +55,16 @@ def test_readiness():
 def test_unknown_source():
     response = client.get("/api/search", params={"q": "футболка", "source": "does-not-exist"})
     assert response.status_code == 400
+
+
+def test_default_search_uses_multi_agent_web_path(monkeypatch):
+    seen = {}
+
+    def fake_agent_search(q, limit):
+        seen.update(q=q, limit=limit)
+        return {"query": q, "items": [], "count": 0, "agent": "multi-agent-router"}
+
+    monkeypatch.setattr("main.agent_search", fake_agent_search)
+    response = client.get("/api/search", params={"q": "кроссовки мальчику 5 лет", "limit": 80})
+    assert response.status_code == 200
+    assert seen == {"q": "кроссовки мальчику 5 лет", "limit": 50}
