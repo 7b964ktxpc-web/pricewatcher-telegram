@@ -7,21 +7,44 @@ on:
     types: [completed]
     branches: [main]
 
+permissions:
+  contents: read
+
+concurrency:
+  group: production-deploy
+  cancel-in-progress: false
+
 jobs:
   deploy:
     if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      TIMEWEB_HOST: ${{ secrets.TIMEWEB_HOST }}
+      TIMEWEB_USER: ${{ secrets.TIMEWEB_USER }}
+      TIMEWEB_SSH_KEY: ${{ secrets.TIMEWEB_SSH_KEY }}
+      TIMEWEB_APP_DIR: ${{ secrets.TIMEWEB_APP_DIR || '/opt/marketplace-parser/repo' }}
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout deployed revision
+        uses: actions/checkout@v4
         with:
           ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
 
+      - name: Validate deployment configuration
+        run: |
+          set -euo pipefail
+          test -n "$TIMEWEB_HOST"
+          test -n "$TIMEWEB_USER"
+          test -n "$TIMEWEB_SSH_KEY"
+          test -n "$TIMEWEB_APP_DIR"
+
       - name: Configure SSH
         run: |
-          mkdir -p ~/.ssh
-          printf '%s\n' '${{ secrets.TIMEWEB_SSH_KEY }}' > ~/.ssh/id_ed25519
-          chmod 600 ~/.ssh/id_ed25519
-          ssh-keyscan -H '${{ secrets.TIMEWEB_HOST }}' >> ~/.ssh/known_hosts
+          set -euo pipefail
+          install -m 700 -d "$HOME/.ssh"
+          printf '%s\n' "$TIMEWEB_SSH_KEY" > "$HOME/.ssh/id_ed25519"
+          chmod 600 "$HOME/.ssh/id_ed25519"
+          ssh-keyscan -H "$TIMEWEB_HOST" >> "$HOME/.ssh/known_hosts"
 
       - name: Deploy and verify
         env:
@@ -41,70 +64,87 @@ jobs:
           AKUSHERSTVO_FEED_URL: ${{ secrets.AKUSHERSTVO_FEED_URL }}
           KORABLIK_FEED_URL: ${{ secrets.KORABLIK_FEED_URL }}
         run: |
-          TOKEN_B64="$(printf '%s' "$TELEGRAM_BOT_TOKEN" | base64 -w0)"
-          DEEPSEEK_B64="$(printf '%s' "$DEEPSEEK_API_KEY" | base64 -w0)"
-          HF_B64="$(printf '%s' "$HF_TOKEN" | base64 -w0)"
-          GROQ_B64="$(printf '%s' "$GROQ_API_KEY" | base64 -w0)"
-          GEMINI_B64="$(printf '%s' "$GEMINI_API_KEY" | base64 -w0)"
-          WB_API_B64="$(printf '%s' "$WB_API_TOKEN" | base64 -w0)"
-          YM_API_B64="$(printf '%s' "$YANDEX_MARKET_API_KEY" | base64 -w0)"
-          YM_BUSINESS_B64="$(printf '%s' "$YANDEX_MARKET_BUSINESS_ID" | base64 -w0)"
-          WB_FEED_B64="$(printf '%s' "$WB_FEED_URL" | base64 -w0)"
-          OZON_FEED_B64="$(printf '%s' "$OZON_FEED_URL" | base64 -w0)"
-          YM_FEED_B64="$(printf '%s' "$YANDEX_MARKET_FEED_URL" | base64 -w0)"
-          SIMALAND_FEED_B64="$(printf '%s' "$SIMALAND_FEED_URL" | base64 -w0)"
-          DETMIR_FEED_B64="$(printf '%s' "$DETMIR_FEED_URL" | base64 -w0)"
-          AKUSHERSTVO_FEED_B64="$(printf '%s' "$AKUSHERSTVO_FEED_URL" | base64 -w0)"
-          KORABLIK_FEED_B64="$(printf '%s' "$KORABLIK_FEED_URL" | base64 -w0)"
-          ssh '${{ secrets.TIMEWEB_USER }}@${{ secrets.TIMEWEB_HOST }}' "set -e
-            mkdir -p /opt/marketplace-parser/repo
-            cd /opt/marketplace-parser/repo
-            if [ -d .git ]; then
-              git fetch origin main
-              git reset --hard origin/main
-            else
-              git clone --branch main https://github.com/7b964ktxpc-web/pricewatcher-telegram.git .
+          set -euo pipefail
+
+          b64() { printf '%s' "$1" | base64 -w0; }
+          export TOKEN_B64="$(b64 "$TELEGRAM_BOT_TOKEN")"
+          export DEEPSEEK_B64="$(b64 "$DEEPSEEK_API_KEY")"
+          export HF_B64="$(b64 "$HF_TOKEN")"
+          export GROQ_B64="$(b64 "$GROQ_API_KEY")"
+          export GEMINI_B64="$(b64 "$GEMINI_API_KEY")"
+          export WB_API_B64="$(b64 "$WB_API_TOKEN")"
+          export YM_API_B64="$(b64 "$YANDEX_MARKET_API_KEY")"
+          export YM_BUSINESS_B64="$(b64 "$YANDEX_MARKET_BUSINESS_ID")"
+          export WB_FEED_B64="$(b64 "$WB_FEED_URL")"
+          export OZON_FEED_B64="$(b64 "$OZON_FEED_URL")"
+          export YM_FEED_B64="$(b64 "$YANDEX_MARKET_FEED_URL")"
+          export SIMALAND_FEED_B64="$(b64 "$SIMALAND_FEED_URL")"
+          export DETMIR_FEED_B64="$(b64 "$DETMIR_FEED_URL")"
+          export AKUSHERSTVO_FEED_B64="$(b64 "$AKUSHERSTVO_FEED_URL")"
+          export KORABLIK_FEED_B64="$(b64 "$KORABLIK_FEED_URL")"
+
+          ssh -i "$HOME/.ssh/id_ed25519" -o BatchMode=yes "$TIMEWEB_USER@$TIMEWEB_HOST" \
+            "APP_DIR='$TIMEWEB_APP_DIR' TOKEN_B64='$TOKEN_B64' DEEPSEEK_B64='$DEEPSEEK_B64' HF_B64='$HF_B64' GROQ_B64='$GROQ_B64' GEMINI_B64='$GEMINI_B64' WB_API_B64='$WB_API_B64' YM_API_B64='$YM_API_B64' YM_BUSINESS_B64='$YM_BUSINESS_B64' WB_FEED_B64='$WB_FEED_B64' OZON_FEED_B64='$OZON_FEED_B64' YM_FEED_B64='$YM_FEED_B64' SIMALAND_FEED_B64='$SIMALAND_FEED_B64' DETMIR_FEED_B64='$DETMIR_FEED_B64' AKUSHERSTVO_FEED_B64='$AKUSHERSTVO_FEED_B64' KORABLIK_FEED_B64='$KORABLIK_FEED_B64' bash -se" <<'REMOTE'
+          set -euo pipefail
+
+          mkdir -p "$APP_DIR"
+          cd "$APP_DIR"
+          if [ -d .git ]; then
+            git fetch origin main
+            git checkout main
+            git reset --hard origin/main
+          else
+            git clone --branch main https://github.com/7b964ktxpc-web/pricewatcher-telegram.git .
+          fi
+
+          : > .env.telegram
+          write_secret() {
+            key="$1"
+            value="$2"
+            if [ -n "$value" ]; then
+              printf '%s=' "$key" >> .env.telegram
+              printf '%s' "$value" | base64 -d >> .env.telegram
+              printf '\n' >> .env.telegram
             fi
-            : > .env.telegram
-            write_secret() { key=\"\$1\"; value=\"\$2\"; if [ -n \"\$value\" ]; then printf '%s=' \"\$key\" >> .env.telegram; printf '%s' \"\$value\" | base64 -d >> .env.telegram; printf '\\n' >> .env.telegram; fi; }
-            write_secret TELEGRAM_BOT_TOKEN '$TOKEN_B64'
-            write_secret DEEPSEEK_API_KEY '$DEEPSEEK_B64'
-            write_secret HF_TOKEN '$HF_B64'
-            write_secret GROQ_API_KEY '$GROQ_B64'
-            write_secret GEMINI_API_KEY '$GEMINI_B64'
-            write_secret WB_API_TOKEN '$WB_API_B64'
-            write_secret YANDEX_MARKET_API_KEY '$YM_API_B64'
-            write_secret YANDEX_MARKET_BUSINESS_ID '$YM_BUSINESS_B64'
-            write_secret WB_FEED_URL '$WB_FEED_B64'
-            write_secret OZON_FEED_URL '$OZON_FEED_B64'
-            write_secret YANDEX_MARKET_FEED_URL '$YM_FEED_B64'
-            write_secret SIMALAND_FEED_URL '$SIMALAND_FEED_B64'
-            write_secret DETMIR_FEED_URL '$DETMIR_FEED_B64'
-            write_secret AKUSHERSTVO_FEED_URL '$AKUSHERSTVO_FEED_B64'
-            write_secret KORABLIK_FEED_URL '$KORABLIK_FEED_B64'
-            chmod 600 .env.telegram
-            docker compose --env-file .env.telegram up -d --build --remove-orphans
-            echo '=== CONTAINERS ==='
-            docker compose ps
-            echo '=== WAITING FOR HEALTH ==='
-            for i in \$(seq 1 15); do
-              if curl -fsS --max-time 5 http://127.0.0.1:8010/health; then
-                echo
-                echo 'HEALTH OK'
-                if docker compose ps --status running --services | grep -qx telegram-bot && docker compose ps --status running --services | grep -qx watchlist-checker; then
-                  echo 'TELEGRAM BOT RUNNING'
-                  echo 'WATCHLIST CHECKER RUNNING'
-                  echo '=== CONNECTION DASHBOARD ==='
-                  curl -fsS --max-time 10 http://127.0.0.1:8010/api/connections
-                  echo
-                  exit 0
-                fi
-              fi
-              echo \"Waiting for application... \$i/15\"
-              sleep 2
-            done
-            echo '=== DEPLOY VERIFICATION FAILED ==='
-            docker compose ps
-            echo '=== APPLICATION LOGS ==='
-            docker compose logs --tail=200
-            exit 1"
+          }
+
+          write_secret TELEGRAM_BOT_TOKEN "$TOKEN_B64"
+          write_secret DEEPSEEK_API_KEY "$DEEPSEEK_B64"
+          write_secret HF_TOKEN "$HF_B64"
+          write_secret GROQ_API_KEY "$GROQ_B64"
+          write_secret GEMINI_API_KEY "$GEMINI_B64"
+          write_secret WB_API_TOKEN "$WB_API_B64"
+          write_secret YANDEX_MARKET_API_KEY "$YM_API_B64"
+          write_secret YANDEX_MARKET_BUSINESS_ID "$YM_BUSINESS_B64"
+          write_secret WB_FEED_URL "$WB_FEED_B64"
+          write_secret OZON_FEED_URL "$OZON_FEED_B64"
+          write_secret YANDEX_MARKET_FEED_URL "$YM_FEED_B64"
+          write_secret SIMALAND_FEED_URL "$SIMALAND_FEED_B64"
+          write_secret DETMIR_FEED_URL "$DETMIR_FEED_B64"
+          write_secret AKUSHERSTVO_FEED_URL "$AKUSHERSTVO_FEED_B64"
+          write_secret KORABLIK_FEED_URL "$KORABLIK_FEED_B64"
+          chmod 600 .env.telegram
+
+          docker compose --env-file .env.telegram up -d --build --remove-orphans
+          docker compose ps
+
+          for i in $(seq 1 15); do
+            if curl -fsS --max-time 5 http://127.0.0.1:8010/health >/dev/null; then
+              echo "HEALTH OK"
+              docker compose ps --status running --services | grep -qx marketplace-parser
+              docker compose ps --status running --services | grep -qx telegram-bot
+              docker compose ps --status running --services | grep -qx watchlist-checker
+              echo "ALL SERVICES RUNNING"
+              curl -fsS --max-time 10 http://127.0.0.1:8010/api/readiness
+              echo
+              exit 0
+            fi
+            echo "Waiting for application... $i/15"
+            sleep 2
+          done
+
+          echo "DEPLOY VERIFICATION FAILED"
+          docker compose ps
+          docker compose logs --tail=200
+          exit 1
+          REMOTE
