@@ -50,12 +50,9 @@ class SourceHealthRegistry:
             state.failures += 1
             if status == "blocked":
                 state.blocked += 1
-                # A single transient 429/5xx should still be retried by the
-                # provider. Open the circuit only after repeated blocks.
-                if state.blocked < 2:
-                    state.cooldown_until = 0.0
-                    return
-                exponent = min(state.blocked - 2, 5)
+                # The first confirmed blocked result opens the circuit. Repeated
+                # blocks increase the cooldown exponentially to protect the source.
+                exponent = min(state.blocked - 1, 5)
                 cooldown = min(self.base * (2**exponent), self.maximum)
                 state.cooldown_until = time.monotonic() + cooldown
 
