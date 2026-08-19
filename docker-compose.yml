@@ -29,6 +29,11 @@ services:
       DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
       DEEPSEEK_MODEL: ${DEEPSEEK_MODEL:-deepseek-chat}
       HF_TOKEN: ${HF_TOKEN:-}
+      HF_ROUTER_MODEL: ${HF_ROUTER_MODEL:-Qwen/Qwen3-8B:fastest}
+      GROQ_API_KEY: ${GROQ_API_KEY:-}
+      GROQ_MODEL: ${GROQ_MODEL:-llama-3.3-70b-versatile}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      GEMINI_MODEL: ${GEMINI_MODEL:-gemini-2.5-flash}
       VISION_API_URL: ${VISION_API_URL:-https://router.huggingface.co/hf-inference/models/Qwen/Qwen2.5-VL-7B-Instruct}
       VISION_TIMEOUT: ${VISION_TIMEOUT:-45}
       PARSER_PUBLIC_URL: http://marketplace-parser:8010
