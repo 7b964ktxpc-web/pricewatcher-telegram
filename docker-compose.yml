@@ -65,6 +65,22 @@ services:
     volumes:
       - telegram-data:/app/data
 
+  admin-bot:
+    build: .
+    command: ["python", "admin_bot_runner.py"]
+    restart: unless-stopped
+    depends_on:
+      marketplace-parser:
+        condition: service_healthy
+    environment:
+      ADMIN_BOT_TOKEN: ${ADMIN_BOT_TOKEN:?ADMIN_BOT_TOKEN is required}
+      ADMIN_USER_IDS: ${ADMIN_USER_IDS:?ADMIN_USER_IDS is required}
+      WATCHLIST_DB_PATH: /app/data/watchlist.sqlite3
+      PARSER_PUBLIC_URL: http://marketplace-parser:8010
+      ADMIN_BOT_TIMEOUT: ${ADMIN_BOT_TIMEOUT:-15}
+    volumes:
+      - telegram-data:/app/data
+
   watchlist-checker:
     build: .
     command: ["python", "watchlist_checker.py"]
