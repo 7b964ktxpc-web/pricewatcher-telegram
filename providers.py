@@ -10,12 +10,17 @@ import requests
 
 from feed_adapters import FEED_ADAPTERS
 from normalizer import normalize_product
+from source_health import SourceHealthRegistry
 
 UA = os.getenv("PARSER_USER_AGENT", "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/131 Safari/537.36")
 TIMEOUT = float(os.getenv("PARSER_TIMEOUT", "12"))
 RETRIES = max(0, int(os.getenv("PARSER_RETRIES", "2")))
 BACKOFF = max(0.0, float(os.getenv("PARSER_BACKOFF", "0.7")))
 RETRY_STATUSES = {429, 500, 502, 503, 504}
+HEALTH = SourceHealthRegistry(
+    base_cooldown_s=float(os.getenv("SOURCE_COOLDOWN_S", "60")),
+    max_cooldown_s=float(os.getenv("SOURCE_MAX_COOLDOWN_S", "1800")),
+)
 
 
 @dataclass
@@ -87,6 +92,8 @@ class WildberriesProvider(PublicProvider):
     marketplace = "wildberries"
 
     def search(self, query: str, limit: int = 20) -> ProviderResult:
+        if not HEALTH.allow(self.name):
+            return ProviderResult(self.name, self.marketplace, [], "cooldown", "source temporarily paused after repeated blocking")
         candidates = [
             ("https://search.wb.ru/exactmatch/ru/common/v9/search", {"resultset": "catalog", "sort": "popular", "suppressSpellcheck": "false"}),
             ("https://search.wb.ru/exactmatch/ru/common/v7/search", {"resultset": "catalog", "sort": "popular"}),
@@ -108,17 +115,15 @@ class WildberriesProvider(PublicProvider):
                     old = p.get("priceU")
                     if isinstance(price, (int, float)): price /= 100
                     if isinstance(old, (int, float)): old /= 100
-                    items.append(normalize_product(
-                        source=self.name, marketplace=self.marketplace, product_id=nm,
-                        title=p.get("name"), price=price, old_price=old,
-                        url=f"https://www.wildberries.ru/catalog/{nm}/detail.aspx" if nm else None,
-                        category=p.get("subjectName"), available=True,
-                        extra={"brand": p.get("brand"), "rating": p.get("rating"), "feedbacks": p.get("feedbacks")},
-                    ))
-                return ProviderResult(self.name, self.marketplace, _dedupe(items, limit), "ok")
+                    items.append(normalize_product(source=self.name, marketplace=self.marketplace, product_id=nm, title=p.get("name"), price=price, old_price=old, url=f"https://www.wildberries.ru/catalog/{nm}/detail.aspx" if nm else None, category=p.get("subjectName"), available=True, extra={"brand": p.get("brand"), "rating": p.get("rating"), "feedbacks": p.get("feedbacks")}))
+                result = ProviderResult(self.name, self.marketplace, _dedupe(items, limit), "ok")
+                HEALTH.record(self.name, result.status)
+                return result
             except (requests.RequestException, ValueError) as e:
                 last = str(e)
-        return ProviderResult(self.name, self.marketplace, [], "blocked", last or "no response")
+        result = ProviderResult(self.name, self.marketplace, [], "blocked", last or "no response")
+        HEALTH.record(self.name, result.status, result.error)
+        return result
 
 
 class OzonProvider(PublicProvider):
@@ -126,13 +131,20 @@ class OzonProvider(PublicProvider):
     marketplace = "ozon"
 
     def search(self, query: str, limit: int = 20) -> ProviderResult:
+        if not HEALTH.allow(self.name):
+            return ProviderResult(self.name, self.marketplace, [], "cooldown", "source temporarily paused after repeated blocking")
         try:
             r = self.get(self.session(), f"https://www.ozon.ru/search/?text={quote_plus(query)}", allow_redirects=True)
             if r.status_code != 200:
-                return ProviderResult(self.name, self.marketplace, [], "blocked", f"HTTP {r.status_code}")
-            return ProviderResult(self.name, self.marketplace, [], "html_only", "catalog page reachable; structured extraction requires an approved feed/adapter")
+                result = ProviderResult(self.name, self.marketplace, [], "blocked", f"HTTP {r.status_code}")
+            else:
+                result = ProviderResult(self.name, self.marketplace, [], "html_only", "catalog page reachable; structured extraction requires an approved feed/adapter")
+            HEALTH.record(self.name, result.status, result.error)
+            return result
         except requests.RequestException as e:
-            return ProviderResult(self.name, self.marketplace, [], "error", str(e))
+            result = ProviderResult(self.name, self.marketplace, [], "error", str(e))
+            HEALTH.record(self.name, result.status, result.error)
+            return result
 
 
 class YandexMarketProvider(PublicProvider):
@@ -140,13 +152,20 @@ class YandexMarketProvider(PublicProvider):
     marketplace = "yandex_market"
 
     def search(self, query: str, limit: int = 20) -> ProviderResult:
+        if not HEALTH.allow(self.name):
+            return ProviderResult(self.name, self.marketplace, [], "cooldown", "source temporarily paused after repeated blocking")
         try:
             r = self.get(self.session(), f"https://market.yandex.ru/search?text={quote_plus(query)}", allow_redirects=True)
             if r.status_code != 200:
-                return ProviderResult(self.name, self.marketplace, [], "blocked", f"HTTP {r.status_code}")
-            return ProviderResult(self.name, self.marketplace, [], "html_only", "search page reachable; structured extraction requires an approved feed/adapter")
+                result = ProviderResult(self.name, self.marketplace, [], "blocked", f"HTTP {r.status_code}")
+            else:
+                result = ProviderResult(self.name, self.marketplace, [], "html_only", "search page reachable; structured extraction requires an approved feed/adapter")
+            HEALTH.record(self.name, result.status, result.error)
+            return result
         except requests.RequestException as e:
-            return ProviderResult(self.name, self.marketplace, [], "error", str(e))
+            result = ProviderResult(self.name, self.marketplace, [], "error", str(e))
+            HEALTH.record(self.name, result.status, result.error)
+            return result
 
 
 class SimaLandProvider(PublicProvider):
@@ -154,16 +173,27 @@ class SimaLandProvider(PublicProvider):
     marketplace = "simaland"
 
     def search(self, query: str, limit: int = 20) -> ProviderResult:
+        if not HEALTH.allow(self.name):
+            return ProviderResult(self.name, self.marketplace, [], "cooldown", "source temporarily paused after repeated blocking")
         try:
             r = self.get(self.session(), f"https://www.sima-land.ru/search/?q={quote_plus(query)}", allow_redirects=True)
             if r.status_code != 200:
-                return ProviderResult(self.name, self.marketplace, [], "blocked", f"HTTP {r.status_code}")
-            return ProviderResult(self.name, self.marketplace, [], "html_only", "search page reachable; use an approved catalog/feed for structured import")
+                result = ProviderResult(self.name, self.marketplace, [], "blocked", f"HTTP {r.status_code}")
+            else:
+                result = ProviderResult(self.name, self.marketplace, [], "html_only", "search page reachable; use an approved catalog/feed for structured import")
+            HEALTH.record(self.name, result.status, result.error)
+            return result
         except requests.RequestException as e:
-            return ProviderResult(self.name, self.marketplace, [], "error", str(e))
+            result = ProviderResult(self.name, self.marketplace, [], "error", str(e))
+            HEALTH.record(self.name, result.status, result.error)
+            return result
 
 
 PROVIDERS = {"wildberries": WildberriesProvider(), "ozon": OzonProvider(), "yandex_market": YandexMarketProvider(), "simaland": SimaLandProvider(), **FEED_ADAPTERS}
+
+
+def source_health() -> list[dict[str, Any]]:
+    return HEALTH.snapshot()
 
 
 def search_sources(query: str, limit: int = 20, sources: list[str] | None = None) -> dict[str, Any]:
@@ -183,4 +213,4 @@ def search_sources(query: str, limit: int = 20, sources: list[str] | None = None
         results.append({"source": result.source, "marketplace": result.marketplace, "status": result.status, "items": result.items, "error": result.error})
 
     items = _dedupe([x for r in results for x in r["items"]], limit)
-    return {"query": query, "count": len(items), "items": items, "sources": results}
+    return {"query": query, "count": len(items), "items": items, "sources": results, "source_health": source_health()}
