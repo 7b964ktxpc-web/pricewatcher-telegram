@@ -9,7 +9,7 @@ from source_registry import source_status
 from source_discovery import discover_sources
 from catalog_store import init_db, search_catalog, stats as catalog_stats, upsert_products
 
-app = FastAPI(title="Marketplace Parser Feed Engine", version="0.18.1")
+app = FastAPI(title="Marketplace Parser Feed Engine", version="0.19.0")
 init_db()
 
 @app.get("/")
@@ -28,6 +28,25 @@ def sources():
 def marketplace_adapters():
     from marketplace_adapters import adapter_status
     return {"adapters": adapter_status()}
+
+@app.get("/api/connections")
+def connections():
+    """Safe connection dashboard: exposes configuration state, never credentials."""
+    from marketplace_adapters import adapter_status
+    from feed_adapter_manager import inspect_feeds
+    adapters = adapter_status()
+    feeds = inspect_feeds()
+    return {
+        "marketplace_apis": adapters,
+        "partner_feeds": feeds,
+        "ai": {
+            "hf_token_configured": bool(os.getenv("HF_TOKEN")),
+            "groq_configured": bool(os.getenv("GROQ_API_KEY")),
+            "gemini_configured": bool(os.getenv("GEMINI_API_KEY")),
+            "deepseek_configured": bool(os.getenv("DEEPSEEK_API_KEY")),
+        },
+        "telegram": {"token_configured": bool(os.getenv("TELEGRAM_BOT_TOKEN"))},
+    }
 
 @app.get("/api/discovery")
 def discovery():
@@ -78,8 +97,6 @@ def ai_plan(q: str = Query(min_length=1, max_length=500)):
 @app.get("/api/web-research")
 def web_research(q: str = Query(min_length=1, max_length=500), limit: int = Query(default=8, ge=1, le=20), fetch_pages: bool = Query(default=True)):
     from agent_web_pipeline import search_web
-    # search_web always performs page fetching so the public endpoint cannot
-    # accidentally return a false "page fetched" state when fetch_pages=false.
     result = search_web(q.strip(), limit)
     result["fetch_pages_requested"] = fetch_pages
     result["fetch_pages_effective"] = True
@@ -135,7 +152,7 @@ def agent_search(q: str = Query(min_length=1, max_length=500), limit: int = Quer
     groups = group_products(ranked, threshold=float(os.getenv("PRODUCT_MATCH_THRESHOLD", "0.72")))
     items = [group["best_offer"] | {"offer_count": group["offer_count"], "lowest_price": group["lowest_price"], "match_group": group["match_group"]} for group in groups[:limit]]
 
-    return {"query": query_text, "count": len(items), "items": items, "product_groups": groups[:limit], "queries": queries, "ai_plan": plan, "requested_sources": requested, "resolved_sources": sources, "web_research": {"runs": len(web_runs), "items": len(web_items), "sources": sorted({str(i.get("source")) for i in web_items if i.get("source")})}, "agent": "multi-agent-router", "parallel": {"queries": len(queries), "sources_per_query": len(sources), "web_research_runs": len(web_runs)}, "runs": [{"query": r.get("query"), "count": r.get("count"), "sources": r.get("sources", []), "error": r.get("error")} for r in runs], "ready": bool(items)}
+    return {"query": query_text, "count": len(items), "items": items, "product_groups": groups[:limit], "queries": queries, "ai_plan": plan, "requested_sources": requested, "resolved_sources": sources, "web_research": {"runs": len(web_runs), "items": len(web_items), "sources": sorted({str(i.get("source")) for i in web_items if i.get("source")}, key=str)}, "agent": "multi-agent-router", "parallel": {"queries": len(queries), "sources_per_query": len(sources), "web_research_runs": len(web_runs)}, "runs": [{"query": r.get("query"), "count": r.get("count"), "sources": r.get("sources", []), "error": r.get("error")} for r in runs], "ready": bool(items)}
 
 @app.get("/api/search")
 def search(q: str = Query(min_length=1, max_length=300), limit: int = Query(default=20, ge=1, le=100), source: str | None = Query(default=None)):
