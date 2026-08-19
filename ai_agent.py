@@ -20,12 +20,7 @@ _cache: dict[str, tuple[float, dict[str, Any]]] = {}
 
 
 class QwenAgent:
-    """Provider adapter for a public Hugging Face Gradio Space.
-
-    Endpoint discovery happens at runtime because Gradio Spaces can expose
-    different named endpoints. The parser remains deterministic: Qwen only
-    turns natural language into a validated search plan.
-    """
+    """Provider adapter for a public Hugging Face Gradio Space."""
 
     def __init__(self, space: str = SPACE):
         self.space = space
@@ -131,7 +126,7 @@ def _fallback_plan(user_request: str) -> dict[str, Any]:
         "size": None,
         "max_price": price,
         "keywords": [],
-        "marketplaces": ["wildberries", "ozon", "yandex_market", "simaland"],
+        "marketplaces": ["wildberries", "ozon", "yandex_market", "simaland", "detmir", "akusherstvo", "korablik"],
         "limit": 20,
         "ai_parse_error": True,
     }
@@ -155,8 +150,9 @@ def plan_search(user_request: str) -> dict[str, Any]:
         return dict(cached[1])
 
     prompt = f'''Ты агент проекта «Мама, дешевле!». Разбери запрос покупателя и верни ТОЛЬКО JSON без markdown.
-Поля: query (строка для поиска), category, age, gender, size, max_price, keywords (массив строк), marketplaces (массив только из wildberries, ozon, yandex_market, simaland), limit (число 1-50).
-Не выдумывай отсутствующие данные; неизвестные значения = null. marketplaces по умолчанию все четыре.
+Поля: query (строка для поиска), category, age, gender, size, max_price, keywords (массив строк), marketplaces (массив только из wildberries, ozon, yandex_market, simaland, detmir, akusherstvo, korablik), limit (число 1-50).
+Не выдумывай отсутствующие данные; неизвестные значения = null. marketplaces по умолчанию все семь источников.
+Если пользователь просит конкретный магазин — выбери только его. Если просит маркетплейсы — выбери соответствующие маркетплейсы. Для общего поиска детских товаров используй все доступные источники.
 Запрос: {user_request}'''
 
     try:
@@ -164,7 +160,7 @@ def plan_search(user_request: str) -> dict[str, Any]:
         obj = _json_object(text) or _fallback_plan(user_request)
         obj["query"] = str(obj.get("query") or user_request).strip()
         obj["limit"] = max(1, min(int(obj.get("limit") or 20), 50))
-        allowed = {"wildberries", "ozon", "yandex_market", "simaland"}
+        allowed = {"wildberries", "ozon", "yandex_market", "simaland", "detmir", "akusherstvo", "korablik"}
         markets = [str(x) for x in (obj.get("marketplaces") or []) if str(x) in allowed]
         obj["marketplaces"] = markets or sorted(allowed)
         if not isinstance(obj.get("keywords"), list):
