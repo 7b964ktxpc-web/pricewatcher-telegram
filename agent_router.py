@@ -47,16 +47,18 @@ def _openai_chat(base_url: str, api_key: str, model: str, prompt: str) -> dict[s
 
 def _provider_plan(name: str, prompt: str) -> dict[str, Any] | None:
     try:
-        if name == "groq" and os.getenv("GROQ_API_KEY"):
-            return _openai_chat("https://api.groq.com/openai/v1", os.environ["GROQ_API_KEY"], os.getenv("GROQ_MODEL", "qwen/qwen3.6-27b"), prompt)
-        if name == "gemini" and os.getenv("GEMINI_API_KEY"):
-            return _openai_chat("https://generativelanguage.googleapis.com/v1beta/openai", os.environ["GEMINI_API_KEY"], os.getenv("GEMINI_MODEL", "gemini-2.5-flash"), prompt)
         if name == "hf" and os.getenv("HF_TOKEN"):
             from huggingface_hub import InferenceClient
             client = InferenceClient(token=os.environ["HF_TOKEN"])
-            model = os.getenv("HF_ROUTER_MODEL", "Qwen/Qwen3-8B")
+            model = os.getenv("HF_ROUTER_MODEL", "Qwen/Qwen3-8B:fastest")
             response = client.chat_completion(model=model, messages=[{"role": "user", "content": prompt}], max_tokens=500, temperature=0)
             return _extract_json(response.choices[0].message.content) or {}
+        if name == "deepseek" and os.getenv("DEEPSEEK_API_KEY"):
+            return _openai_chat("https://api.deepseek.com", os.environ["DEEPSEEK_API_KEY"], os.getenv("DEEPSEEK_MODEL", "deepseek-chat"), prompt)
+        if name == "groq" and os.getenv("GROQ_API_KEY"):
+            return _openai_chat("https://api.groq.com/openai/v1", os.environ["GROQ_API_KEY"], os.environ["GROQ_MODEL"], prompt)
+        if name == "gemini" and os.getenv("GEMINI_API_KEY"):
+            return _openai_chat("https://generativelanguage.googleapis.com/v1beta/openai", os.environ["GEMINI_API_KEY"], os.environ["GEMINI_MODEL"], prompt)
     except Exception:
         return None
     return None
@@ -68,7 +70,9 @@ def _prompt(query: str) -> str:
 
 def build_plan(query: str) -> dict[str, Any]:
     prompt = _prompt(query)
-    providers = ["groq", "gemini", "hf"]
+    # Prefer HF routed inference because one HF token can route to multiple
+    # providers/models. Direct providers remain fallbacks when their secrets exist.
+    providers = ["hf", "deepseek", "groq", "gemini"]
     plans: list[dict[str, Any]] = []
     for provider in providers:
         result = _provider_plan(provider, prompt)
@@ -115,12 +119,6 @@ def expand_queries(plan: dict[str, Any], original: str) -> list[str]:
 
 
 def resolve_sources(names: list[str]) -> list[str]:
-    """Translate logical marketplace names into configured runtime providers.
-
-    Child stores currently have feed-only adapters. If no feed is configured,
-    they are returned as explicit `not_configured` providers only when the
-    caller asks for them, avoiding accidental scraping of storefront HTML.
-    """
     resolved: list[str] = []
     for name in names:
         if name in FEED_ADAPTERS:
@@ -146,12 +144,13 @@ def router_status() -> dict[str, Any]:
     return {
         "agents": {
             "qwen_space": True,
+            "huggingface_router": bool(os.getenv("HF_TOKEN")),
+            "deepseek": bool(os.getenv("DEEPSEEK_API_KEY")),
             "groq": bool(os.getenv("GROQ_API_KEY")),
             "gemini": bool(os.getenv("GEMINI_API_KEY")),
-            "huggingface_router": bool(os.getenv("HF_TOKEN")),
         },
         "sources": sorted(ALLOWED_SOURCES),
         "query_expansion": True,
-        "bounded_agent_calls": 4,
+        "bounded_agent_calls": 5,
         "feed_source_resolution": True,
     }
