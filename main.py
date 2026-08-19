@@ -32,22 +32,32 @@ def summarize_feed_readiness(feeds):
         }
     return {"configured": 0, "total": 0, "items": feeds}
 
+
 @app.get("/")
 def root():
     return {"service": "marketplace-parser", "version": app.version, "status": "ready"}
+
 
 @app.get("/health")
 def health():
     return {"ok": True, "service": "marketplace-parser", "version": app.version}
 
+
 @app.get("/api/sources")
 def sources():
-    return {"sources": list(PROVIDERS), "registry": source_status(), "mode": "web-research-plus-public-feeds-plus-official-apis"}
+    return {
+        "sources": list(PROVIDERS),
+        "registry": source_status(),
+        "mode": "multi-agent-web-research-plus-public-feeds-plus-official-apis",
+        "web_research": {"enabled": True, "engines": ["duckduckgo", "bing"]},
+    }
+
 
 @app.get("/api/marketplace-adapters")
 def marketplace_adapters():
     from marketplace_adapters import adapter_status
     return {"adapters": adapter_status()}
+
 
 @app.get("/api/connections")
 def connections():
@@ -70,6 +80,7 @@ def connections():
         "telegram": {"token_configured": bool(os.getenv("TELEGRAM_BOT_TOKEN"))},
     }
 
+
 @app.get("/api/readiness")
 def readiness():
     """Deployment readiness for the parser/API service.
@@ -91,6 +102,7 @@ def readiness():
     ai_ready = bool(ai.get("qwen") or ai.get("deepseek_configured") or ai.get("groq_configured") or ai.get("gemini_configured"))
     web_research_ready = True
     ready = bool(ai_ready and web_research_ready)
+    next_step = "run a real Telegram/web search" if ready else "configure at least one AI provider"
     return {
         "ready": ready,
         "telegram": {"configured": None, "service": "telegram-bot", "note": "configured in the telegram-bot service"},
@@ -98,17 +110,20 @@ def readiness():
         "web_research": {"ready": web_research_ready, "engines": ["duckduckgo", "bing"]},
         "marketplaces": {"configured": configured_marketplaces, "total": len(adapters), "items": adapters},
         "feeds": feed_summary,
-        "next": "run a real Telegram/web search" if ready else "configure at least one AI provider",
+        "next": next_step,
     }
+
 
 @app.get("/api/discovery")
 def discovery():
     return discover_sources()
 
+
 @app.get("/api/feed-adapters")
 def feed_adapters():
     from feed_adapter_manager import inspect_feeds
     return inspect_feeds()
+
 
 @app.get("/api/feed-import")
 def feed_import(limit: int = Query(default=5000, ge=1, le=50000)):
@@ -119,19 +134,23 @@ def feed_import(limit: int = Query(default=5000, ge=1, le=50000)):
     result["catalog"] = catalog_stats()
     return result
 
+
 @app.get("/api/catalog")
 def catalog(q: str = Query(min_length=1, max_length=300), limit: int = Query(default=50, ge=1, le=500), max_price: float | None = Query(default=None, ge=0)):
     items = search_catalog(q.strip(), limit, max_price)
     return {"query": q.strip(), "count": len(items), "items": items, "source": "local-catalog"}
 
+
 @app.get("/api/catalog/stats")
 def catalog_statistics():
     return catalog_stats()
+
 
 @app.get("/api/source-health")
 def source_health():
     from source_health import source_health_snapshot
     return {"sources": source_health_snapshot()}
+
 
 @app.get("/api/ai/status")
 def ai_status():
@@ -139,6 +158,7 @@ def ai_status():
     from agent_router import router_status
     from conversation_agent import status as chat_status
     return {"qwen": agent_status(), "router": router_status(), "chat": chat_status()}
+
 
 @app.get("/api/ai/plan")
 def ai_plan(q: str = Query(min_length=1, max_length=500)):
@@ -148,6 +168,7 @@ def ai_plan(q: str = Query(min_length=1, max_length=500)):
     except Exception as exc:
         raise HTTPException(503, f"AI unavailable: {exc}") from exc
 
+
 @app.get("/api/web-research")
 def web_research(q: str = Query(min_length=1, max_length=500), limit: int = Query(default=8, ge=1, le=20), fetch_pages: bool = Query(default=True)):
     from agent_web_pipeline import search_web
@@ -156,6 +177,7 @@ def web_research(q: str = Query(min_length=1, max_length=500), limit: int = Quer
     result["fetch_pages_effective"] = True
     return result
 
+
 @app.get("/api/child-search")
 def child_search(q: str = Query(min_length=1, max_length=500), limit: int = Query(default=12, ge=1, le=30)):
     from child_deal_search import search_child_deals
@@ -163,6 +185,7 @@ def child_search(q: str = Query(min_length=1, max_length=500), limit: int = Quer
         return search_child_deals(q.strip(), limit)
     except Exception as exc:
         raise HTTPException(502, f"Child deal search failed: {exc}") from exc
+
 
 @app.get("/api/agent/search")
 def agent_search(q: str = Query(min_length=1, max_length=500), limit: int = Query(default=20, ge=1, le=50)):
@@ -206,15 +229,36 @@ def agent_search(q: str = Query(min_length=1, max_length=500), limit: int = Quer
     groups = group_products(ranked, threshold=float(os.getenv("PRODUCT_MATCH_THRESHOLD", "0.72")))
     items = [group["best_offer"] | {"offer_count": group["offer_count"], "lowest_price": group["lowest_price"], "match_group": group["match_group"]} for group in groups[:limit]]
 
-    return {"query": query_text, "count": len(items), "items": items, "product_groups": groups[:limit], "queries": queries, "ai_plan": plan, "requested_sources": requested, "resolved_sources": sources, "web_research": {"runs": len(web_runs), "items": len(web_items), "sources": sorted({str(i.get("source")) for i in web_items if i.get("source")}, key=str)}, "agent": "multi-agent-router", "parallel": {"queries": len(queries), "sources_per_query": len(sources), "web_research_runs": len(web_runs)}, "runs": [{"query": r.get("query"), "count": r.get("count"), "sources": r.get("sources", []), "error": r.get("error")} for r in runs], "ready": bool(items)}
+    return {
+        "query": query_text,
+        "count": len(items),
+        "items": items,
+        "product_groups": groups[:limit],
+        "queries": queries,
+        "ai_plan": plan,
+        "requested_sources": requested,
+        "resolved_sources": sources,
+        "web_research": {
+            "runs": len(web_runs),
+            "items": len(web_items),
+            "sources": sorted({str(i.get("source")) for i in web_items if i.get("source")}, key=str),
+        },
+        "agent": "multi-agent-router",
+        "parallel": {"queries": len(queries), "sources_per_query": len(sources), "web_research_runs": len(web_runs)},
+        "runs": [{"query": r.get("query"), "count": r.get("count"), "sources": r.get("sources", []), "error": r.get("error")} for r in runs],
+        "ready": bool(items),
+    }
+
 
 @app.get("/api/search")
 def search(q: str = Query(min_length=1, max_length=300), limit: int = Query(default=20, ge=1, le=100), source: str | None = Query(default=None)):
-    selected = [source] if source else None
-    allowed = set(PROVIDERS)
-    if source and source not in allowed:
-        raise HTTPException(400, f"Unknown source: {source}")
-    return search_sources(q.strip(), limit, selected)
+    """Public search: use the multi-agent web path by default; keep explicit source as a provider-only diagnostic."""
+    if source:
+        if source not in set(PROVIDERS):
+            raise HTTPException(400, f"Unknown source: {source}")
+        return search_sources(q.strip(), limit, [source])
+    return agent_search(q=q, limit=min(limit, 50))
+
 
 @app.get("/api/test-product")
 def test_product():
