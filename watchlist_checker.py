@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 import time
 from typing import Any
 from urllib.parse import urlsplit, urlunsplit
@@ -45,18 +46,46 @@ def _url(value: Any) -> str:
         return raw.rstrip("/")
 
 
+def _tokens(value: Any) -> set[str]:
+    if not isinstance(value, str):
+        return set()
+    return {token for token in re.findall(r"[a-zа-яё0-9]+", value.lower()) if len(token) >= 3}
+
+
+def _title_matches(watched_title: Any, offer_title: Any) -> bool:
+    watched = _tokens(watched_title)
+    offered = _tokens(offer_title)
+    if not watched or not offered:
+        return False
+    overlap = len(watched & offered) / len(watched)
+    return overlap >= 0.5
+
+
 def _best_price(item: dict[str, Any], offers: list[dict[str, Any]]) -> float | None:
     watched_url = _url(item.get("url") or item.get("product_url"))
+
+    # Prefer the exact watched URL. This is the safest comparison for a saved item.
     exact_prices: list[float] = []
-    for offer in offers:
-        if watched_url and _url(offer.get("url") or offer.get("product_url")) == watched_url:
-            price = _price(offer)
-            if price is not None:
-                exact_prices.append(price)
-    if exact_prices:
-        return min(exact_prices)
-    prices = [price for offer in offers if (price := _price(offer)) is not None]
-    return min(prices) if prices else None
+    if watched_url:
+        for offer in offers:
+            offer_url = _url(offer.get("url") or offer.get("product_url"))
+            if offer_url == watched_url:
+                price = _price(offer)
+                if price is not None:
+                    exact_prices.append(price)
+        if exact_prices:
+            return min(exact_prices)
+
+    # If the saved item has no stable URL, only compare semantically matching
+    # titles. Never fall back to the cheapest unrelated search result: that can
+    # produce false price-drop alerts for a completely different product.
+    matched_prices = [
+        price
+        for offer in offers
+        if _title_matches(item.get("title"), offer.get("title"))
+        if (price := _price(offer)) is not None
+    ]
+    return min(matched_prices) if matched_prices else None
 
 
 def _search(item: dict[str, Any]) -> list[dict[str, Any]]:
