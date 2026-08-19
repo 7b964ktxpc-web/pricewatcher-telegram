@@ -22,7 +22,8 @@ jobs:
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
         run: |
-          ssh '${{ secrets.TIMEWEB_USER }}@${{ secrets.TIMEWEB_HOST }}' 'set -e
+          TOKEN_B64="$(printf '%s' "$TELEGRAM_BOT_TOKEN" | base64 -w0)"
+          ssh '${{ secrets.TIMEWEB_USER }}@${{ secrets.TIMEWEB_HOST }}' "set -e
             mkdir -p /opt/marketplace-parser/repo
             cd /opt/marketplace-parser/repo
 
@@ -33,34 +34,35 @@ jobs:
               git clone --branch main https://github.com/7b964ktxpc-web/pricewatcher-telegram.git .
             fi
 
-            if [ -n "$TELEGRAM_BOT_TOKEN" ]; then
-              printf "TELEGRAM_BOT_TOKEN=%s\\n" "$TELEGRAM_BOT_TOKEN" > .env.telegram
+            if [ -n '$TOKEN_B64' ]; then
+              printf '%s' '$TOKEN_B64' | base64 -d > .env.telegram
               chmod 600 .env.telegram
+              echo 'Telegram bot secret configured.'
             else
               rm -f .env.telegram
-              echo "WARNING: TELEGRAM_BOT_TOKEN secret is not configured; Telegram bot will remain stopped/unusable."
+              echo 'WARNING: TELEGRAM_BOT_TOKEN secret is not configured; Telegram bot will remain unusable.'
             fi
 
             docker compose --env-file .env.telegram up -d --build --remove-orphans
 
-            echo "=== CONTAINERS ==="
+            echo '=== CONTAINERS ==='
             docker compose ps
 
-            echo "=== WAITING FOR HEALTH ==="
-            for i in $(seq 1 15); do
+            echo '=== WAITING FOR HEALTH ==='
+            for i in \$(seq 1 15); do
               if curl -fsS --max-time 5 http://127.0.0.1:8010/health; then
                 echo
-                echo "HEALTH OK"
+                echo 'HEALTH OK'
                 exit 0
               fi
-              echo "Waiting for application... $i/15"
+              echo \"Waiting for application... \$i/15\"
               sleep 2
             done
 
-            echo "=== HEALTHCHECK FAILED ==="
+            echo '=== HEALTHCHECK FAILED ==='
             docker compose ps
-            echo "=== CONTAINER STATE ==="
-            docker inspect repo-marketplace-parser-1 --format "{{json .State}}" || true
-            echo "=== APPLICATION LOGS ==="
+            echo '=== CONTAINER STATE ==='
+            docker inspect repo-marketplace-parser-1 --format '{{json .State}}' || true
+            echo '=== APPLICATION LOGS ==='
             docker compose logs --tail=200
-            exit 1'
+            exit 1"
