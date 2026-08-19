@@ -12,8 +12,10 @@ def normalize_product(*, source: str, marketplace: str | None, product_id: str |
     discount = None
     if price is not None and old_price is not None and old_price > price:
         discount = round((1 - float(price) / float(old_price)) * 100)
+    normalized_id = str(product_id) if product_id is not None else None
     return {
-        "id": str(product_id) if product_id is not None else None,
+        "id": normalized_id,
+        "product_id": normalized_id,
         "source": source, "marketplace": marketplace, "title": title,
         "price": price, "old_price": old_price, "discount_percent": discount,
         "image": image, "url": url, "affiliate_url": affiliate_url,
