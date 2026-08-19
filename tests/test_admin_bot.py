@@ -24,8 +24,29 @@ def test_disabled_without_token_or_admin_ids(monkeypatch):
     assert not admin.enabled()
 
 
-def test_menu_contains_core_admin_actions(monkeypatch):
+def test_menu_contains_all_admin_actions(monkeypatch):
     admin = load_admin_bot(monkeypatch)
     rows = admin.menu_keyboard()["inline_keyboard"]
     callbacks = {button["callback_data"] for row in rows for button in row}
-    assert {"stats", "health", "watchlist", "search"} <= callbacks
+    assert {"stats", "health", "users", "watchlist", "search", "sources", "broadcast", "menu"} <= callbacks
+
+
+def test_text_handlers_route_commands(monkeypatch):
+    admin = load_admin_bot(monkeypatch)
+    sent = []
+    monkeypatch.setattr(admin, "send_message", lambda chat_id, text, reply_markup=None: sent.append((chat_id, text)))
+    admin.handle_text(10, 123, "/stats")
+    admin.handle_text(10, 123, "/health")
+    admin.handle_text(10, 123, "/users")
+    admin.handle_text(10, 123, "/watchlist")
+    admin.handle_text(10, 123, "/search")
+    admin.handle_text(10, 123, "/sources")
+    assert len(sent) == 6
+
+
+def test_non_admin_cannot_trigger_commands(monkeypatch):
+    admin = load_admin_bot(monkeypatch)
+    sent = []
+    monkeypatch.setattr(admin, "send_message", lambda *args, **kwargs: sent.append(args))
+    admin.handle_text(10, 999, "/stats")
+    assert sent == []
