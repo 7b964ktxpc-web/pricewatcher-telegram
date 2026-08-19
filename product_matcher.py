@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from difflib import SequenceMatcher
 from typing import Any
 
 
@@ -12,13 +13,9 @@ def _norm(value: Any) -> str:
     return re.sub(r"\s+", " ", str(value or "").casefold()).strip()
 
 
-def _signature(item: dict[str, Any]) -> tuple[str, ...]:
+def _brand(item: dict[str, Any]) -> str:
     extra = item.get("extra") or {}
-    text = " ".join([
-        str(item.get("title") or ""), str(item.get("category") or ""),
-        str(extra.get("brand") or ""), str(extra.get("description") or ""),
-    ])
-    return tuple(sorted(_tokens(text)))
+    return _norm(item.get("brand") or extra.get("brand"))
 
 
 def match_score(a: dict[str, Any], b: dict[str, Any]) -> float:
@@ -28,33 +25,36 @@ def match_score(a: dict[str, Any], b: dict[str, Any]) -> float:
     at, bt = _tokens(_norm(a.get("title"))), _tokens(_norm(b.get("title")))
     if not at or not bt:
         return 0.0
-    title = len(at & bt) / max(1, len(at | bt))
-    ae, be = a.get("extra") or {}, b.get("extra") or {}
-    ab, bb = _norm(ae.get("brand")), _norm(be.get("brand"))
-    brand = 1.0 if ab and bb and ab == bb else 0.0
+    title_overlap = len(at & bt) / max(1, len(at | bt))
+    sequence = SequenceMatcher(None, _norm(a.get("title")), _norm(b.get("title"))).ratio()
+    ab, bb = _brand(a), _brand(b)
+    brand = 1.0 if ab and bb and ab == bb else (0.0 if ab and bb else 0.5)
     ac, bc = _norm(a.get("category")), _norm(b.get("category"))
     category = 1.0 if ac and bc and ac == bc else 0.0
-    return round(min(1.0, title * 0.75 + brand * 0.15 + category * 0.10), 4)
+    return round(min(1.0, title_overlap * 0.45 + sequence * 0.30 + brand * 0.15 + category * 0.10), 4)
 
 
 def group_products(items: list[dict[str, Any]], threshold: float = 0.72) -> list[dict[str, Any]]:
     groups: list[dict[str, Any]] = []
     for item in items:
-        placed = False
+        best_group = None
+        best_score = 0.0
         for group in groups:
-            representative = group["items"][0]
-            if match_score(representative, item) >= threshold:
-                group["items"].append(item)
-                placed = True
-                break
-        if not placed:
-            groups.append({"items": [item]})
+            score = max(match_score(group["items"][0], offer) for offer in [item])
+            if score > best_score:
+                best_group, best_score = group, score
+        if best_group is not None and best_score >= threshold:
+            best_group["items"].append(item)
+            best_group["match_score"] = max(best_group["match_score"], best_score)
+        else:
+            groups.append({"items": [item], "match_score": 1.0})
 
     result: list[dict[str, Any]] = []
     for index, group in enumerate(groups, 1):
         offers = group["items"]
         priced = [x for x in offers if isinstance(x.get("price"), (int, float))]
         cheapest = min(priced, key=lambda x: x["price"]) if priced else offers[0]
+        prices = [float(x["price"]) for x in priced]
         result.append({
             "match_group": index,
             "title": cheapest.get("title"),
@@ -63,6 +63,11 @@ def group_products(items: list[dict[str, Any]], threshold: float = 0.72) -> list
             "offer_count": len(offers),
             "best_offer": cheapest,
             "lowest_price": cheapest.get("price"),
+            "price_spread": max(prices) - min(prices) if len(prices) > 1 else 0,
+            "match_score": round(group["match_score"], 4),
         })
-    result.sort(key=lambda x: x.get("lowest_price") if isinstance(x.get("lowest_price"), (int, float)) else float("inf"))
-    return result
+    return sorted(result, key=lambda x: x.get("lowest_price") if isinstance(x.get("lowest_price"), (int, float)) else float("inf"))
+
+
+def compare_prices(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return group_products(items)
