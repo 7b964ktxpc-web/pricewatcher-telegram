@@ -19,6 +19,23 @@ def _price(item: dict[str, Any]) -> float | None:
     return float(value) if isinstance(value, (int, float)) else None
 
 
+def _best_price(item: dict[str, Any], offers: list[dict[str, Any]]) -> float | None:
+    """Prefer the exact watched URL; only fall back to search results when it is absent."""
+    watched_url = item.get("url") or item.get("product_url")
+    exact_prices = [
+        price
+        for offer in offers
+        if watched_url and (offer.get("url") or offer.get("product_url")) == watched_url
+        for price in [_price(offer)]
+        if price is not None
+    ]
+    if exact_prices:
+        return min(exact_prices)
+
+    prices = [price for offer in offers if (price := _price(offer)) is not None]
+    return min(prices) if prices else None
+
+
 def check_once() -> int:
     checked = 0
     for item in list_all():
@@ -31,20 +48,28 @@ def check_once() -> int:
             response.raise_for_status()
             data = response.json()
             offers = data.get("confirmed") or data.get("items") or []
-            prices = [p for p in (_price(offer) for offer in offers) if p is not None]
-            if not prices:
+            if not isinstance(offers, list):
                 continue
-            new_price = min(prices)
+            new_price = _best_price(item, [offer for offer in offers if isinstance(offer, dict)])
+            if new_price is None:
+                continue
+
             old_price = item.get("last_price")
             update_price(int(item["chat_id"]), str(item["item_key"]), new_price)
             checked += 1
+
             if isinstance(old_price, (int, float)) and new_price < float(old_price):
                 saved = float(old_price)
                 drop = saved - new_price
                 percent = drop / saved * 100 if saved else 0
                 send_message(
                     int(item["chat_id"]),
-                    f"📉 Цена снизилась!\n\n{item['title']}\n💰 Было: {saved:,.0f} ₽\n🔥 Сейчас: {new_price:,.0f} ₽\n⬇️ Экономия: {drop:,.0f} ₽ ({percent:.0f}%)".replace(",", " "),
+                    (
+                        f"📉 Цена снизилась!\n\n{item['title']}\n"
+                        f"💰 Было: {saved:,.0f} ₽\n"
+                        f"🔥 Сейчас: {new_price:,.0f} ₽\n"
+                        f"⬇️ Экономия: {drop:,.0f} ₽ ({percent:.0f}%)"
+                    ).replace(",", " "),
                 )
         except Exception as exc:
             print(f"Watchlist check error for {item.get('item_key')}: {exc}", flush=True)
