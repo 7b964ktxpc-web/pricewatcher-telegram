@@ -8,6 +8,16 @@ from product_offer_matcher import group_offers
 from verified_deal_pipeline import build_verified_deals
 
 
+def _source_name(item: dict[str, Any]) -> str:
+    source = item.get("source") or item.get("marketplace") or "web"
+    return str(source)
+
+
+def _sort_key(item: dict[str, Any]) -> tuple[int, float]:
+    price = item.get("price")
+    return (0, float(price)) if isinstance(price, (int, float)) else (1, float("inf"))
+
+
 def search_child_deals(text: str, max_results: int = 12) -> dict[str, Any]:
     parsed = parse_child_query(text)
     queries = build_search_queries(parsed)
@@ -28,17 +38,26 @@ def search_child_deals(text: str, max_results: int = 12) -> dict[str, Any]:
             break
 
     verified = build_verified_deals(discovered, limit=min(max_results, 8))
-    grouped = group_offers(verified["items"])
+    confirmed = sorted(verified["items"], key=_sort_key)
+    grouped = group_offers(confirmed)
     budget = parsed.get("budget_max")
     if budget is not None:
-        grouped = [g for g in grouped if g.get("lowest_price") is None or g["lowest_price"] <= budget]
+        grouped = [g for g in grouped if g.get("lowest_price") is not None and g["lowest_price"] <= budget]
+
+    sources: dict[str, int] = {}
+    for item in confirmed:
+        name = _source_name(item)
+        sources[name] = sources.get(name, 0) + 1
 
     return {
         "query": parsed,
         "search_queries": queries,
         "discovered_count": len(discovered),
         "checked_count": verified["checked"],
-        "confirmed_count": verified["count"],
+        "confirmed_count": len(confirmed),
+        "confirmed": confirmed,
         "deals": grouped,
+        "sources": sources,
         "unverified": verified["unverified"],
+        "ready": bool(confirmed),
     }
