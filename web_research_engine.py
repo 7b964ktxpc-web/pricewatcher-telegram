@@ -75,8 +75,20 @@ def search_engine(query: str, engine: str = "duckduckgo", limit: int = 10) -> li
         url = _unwrap_url(html.unescape(url))
         title = _clean_text(title)
         if url.startswith("http") and title:
-            found.append({"engine": engine, "title": title, "url": url, "source": _source_for(url)})
+            found.append({"engine": engine, "query": query, "title": title, "url": url, "source": _source_for(url)})
     return found[:limit]
+
+
+def _source_priority(source: str) -> int:
+    return {"pepper": 0, "ozon": 1, "wildberries": 1, "yandex_market": 1, "simaland": 2, "detmir": 2, "akusherstvo": 2, "korablik": 2}.get(source, 3)
+
+
+def _extract_requested_domains(queries: list[str]) -> set[str]:
+    domains: set[str] = set()
+    for query in queries:
+        for domain in re.findall(r"(?:site:|domain:)([a-z0-9.-]+)", query, re.I):
+            domains.add(domain.lower().removeprefix("www."))
+    return domains
 
 
 def discover(query: str, limit: int = 8) -> dict[str, Any]:
@@ -91,14 +103,42 @@ def discover(query: str, limit: int = 8) -> dict[str, Any]:
             for item in future.result():
                 (errors if item.get("error") else results).append(item)
 
-    # Prefer known marketplaces/deal sites, but keep ordinary shops as fallback.
-    priority = {"pepper": 0, "ozon": 1, "wildberries": 1, "yandex_market": 1, "simaland": 2, "detmir": 2}
-    results.sort(key=lambda x: (priority.get(x.get("source"), 3), x.get("title", "").lower()))
     dedup: dict[str, dict[str, Any]] = {}
     for item in results:
         dedup.setdefault(item["url"].split("#", 1)[0], item)
-    items = list(dedup.values())
-    return {"query": query, "count": len(items), "items": items[:max(1, limit)], "queries": queries, "engines": engines, "errors": errors}
+    unique = list(dedup.values())
+
+    # Do not let a few high-ranking sources consume the complete result budget.
+    # Targeted site: queries are therefore represented first, then the remaining
+    # slots are filled by the best generic results.
+    requested_domains = _extract_requested_domains(queries)
+    selected: list[dict[str, Any]] = []
+    selected_urls: set[str] = set()
+    per_source_cap = max(1, min(2, limit // 4 or 1))
+
+    def domain_matches(item: dict[str, Any], domain: str) -> bool:
+        current = _domain(item.get("url", ""))
+        return current == domain or current.endswith("." + domain) or domain.endswith("." + current)
+
+    targeted = [item for item in unique if any(domain_matches(item, d) for d in requested_domains)]
+    targeted.sort(key=lambda x: (_source_priority(x.get("source", "")), x.get("title", "").lower()))
+    counts: dict[str, int] = {}
+    for item in targeted:
+        source = item.get("source", "web")
+        if counts.get(source, 0) >= per_source_cap or item["url"] in selected_urls:
+            continue
+        selected.append(item)
+        selected_urls.add(item["url"])
+        counts[source] = counts.get(source, 0) + 1
+        if len(selected) >= limit:
+            break
+
+    if len(selected) < limit:
+        fallback = [item for item in unique if item["url"] not in selected_urls]
+        fallback.sort(key=lambda x: (_source_priority(x.get("source", "")), x.get("title", "").lower()))
+        selected.extend(fallback[: limit - len(selected)])
+
+    return {"query": query, "count": len(selected), "items": selected[:max(1, limit)], "queries": queries, "engines": engines, "errors": errors, "source_counts": counts}
 
 
 def fetch_page(url: str) -> dict[str, Any]:
