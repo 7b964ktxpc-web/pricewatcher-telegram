@@ -13,6 +13,7 @@ SOURCES = {
     "detmir": ["detmir.ru"],
     "korablik": ["korablik.ru"],
     "akusherstvo": ["akusherstvo.ru"],
+    "kapika": ["kapika.ru"],
 }
 
 
