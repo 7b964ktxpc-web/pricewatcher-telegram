@@ -2,11 +2,10 @@ import time
 
 import requests
 
-from admin_bot import _api, enabled, run_once, validate_startup
+from admin_bot import enabled, run_once
 
 
 def main() -> None:
-    validate_startup()
     offset = None
     while True:
         try:
