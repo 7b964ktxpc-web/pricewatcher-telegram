@@ -172,7 +172,7 @@ def watchlist_text() -> tuple[str, dict[str, Any]]:
 def _format_history(history: list[dict[str, Any]]) -> str:
     if not history:
         return "📉 История: нет данных"
-    values = [float(row["price"]) for row in reversed(history) if row.get("price") is not None]
+    values = [float(row["price"]) for row in history if row.get("price") is not None]
     if not values:
         return "📉 История: нет данных"
     chain = " → ".join(f"{value:,.0f} ₽".replace(",", " ") for value in values[-6:])
@@ -191,8 +191,13 @@ def _watch_item(item_id: int) -> tuple[str, dict[str, Any]]:
     price = row.get("last_price")
     price_text = f"{float(price):,.0f} ₽".replace(",", " ") if price is not None else "не указана"
     with sqlite3.connect(DB_PATH) as conn:
-        key_row = conn.execute("SELECT item_key FROM watchlist WHERE rowid=?", (item_id,)).fetchone()
-    history = price_history(int(row["chat_id"]), str(key_row[0]), 10) if key_row else []
+        columns = {str(r[1]) for r in conn.execute("PRAGMA table_info(watchlist)").fetchall()}
+        if "item_key" in columns:
+            key_row = conn.execute("SELECT item_key FROM watchlist WHERE rowid=?", (item_id,)).fetchone()
+            item_key = str(key_row[0]) if key_row else str(row.get("url") or row.get("title") or "")
+        else:
+            item_key = str(row.get("url") or row.get("title") or "")
+    history = price_history(int(row["chat_id"]), item_key, 10)
     text = ("🔔 Товар Watchlist\n\n"
             f"📦 {row.get('title') or 'Без названия'}\n"
             f"👤 Пользователь: {row.get('chat_id')}\n"
@@ -216,212 +221,3 @@ def _watch_verify_text(item_id: int) -> str:
     old_text = f"{float(old_price):,.0f} ₽".replace(",", " ") if old_price is not None else "нет"
     new_text = f"{float(new_price):,.0f} ₽".replace(",", " ") if new_price is not None else "не найдена"
     return ("🔄 Проверка цены\n\n" f"📦 {item.get('title') or 'Без названия'}\n" f"💰 Было: {old_text}\n" f"💰 Сейчас: {new_text}\n" f"🔎 Статус: {status}\n" f"🧪 Метод: {verification.get('verification_method', 'unknown')}\n" f"🔗 {verification.get('final_url') or item.get('url')}")
-
-
-def notifications_text(min_drop_amount: float = 0.0, min_drop_percent: float = 0.0) -> tuple[str, dict[str, Any]]:
-    rows = list_notifications(20, min_drop_amount=min_drop_amount, min_drop_percent=min_drop_percent)
-    if not rows:
-        return "📉 Price Drop\n\nСобытий по выбранному фильтру пока нет.", notifications_keyboard()
-    lines = ["📉 Price Drop", ""]
-    for row in rows:
-        lines.append(format_notification(row))
-        lines.append("")
-    return "\n".join(lines).strip(), notifications_keyboard()
-
-
-def sources_text() -> str:
-    return format_text()
-
-
-def health_text() -> str:
-    lines = ["🩺 Состояние системы"]
-    try:
-        response = requests.get(f"{PARSER_BASE_URL}/health", timeout=TIMEOUT)
-        response.raise_for_status()
-        data = response.json()
-        lines.append(f"🟢 Parser API: {data.get('status', 'ok')}")
-    except Exception as exc:
-        lines.append(f"🔴 Parser API: {type(exc).__name__}")
-    stats = _db_stats()
-    lines.append(f"💾 Watchlist DB: {stats['watchlist']} товаров")
-    lines.append(f"📉 Notification DB: {stats['notifications']} событий")
-    lines.append(f"🤖 Admin bot: {'🟢 configured' if enabled() else '🔴 not configured'}")
-    return "\n".join(lines)
-
-
-def _search_check() -> str:
-    try:
-        response = requests.get(f"{PARSER_BASE_URL}/api/agent/search", params={"q": "детская футболка мальчик 5 лет", "limit": 1}, timeout=max(TIMEOUT, 30.0))
-        response.raise_for_status()
-        data = response.json()
-        return f"🔎 Поиск: {'🟢' if data.get('ready') or data.get('count', 0) > 0 else '🟡'}\nРезультатов: {data.get('count', 0)}"
-    except Exception as exc:
-        return f"🔴 Поиск недоступен: {type(exc).__name__}"
-
-
-def _show_menu(chat_id: int) -> None:
-    send_message(chat_id, "🔐 Панель администратора\n\nВыбери нужный раздел:", menu_keyboard())
-
-
-def _broadcast(text: str) -> str:
-    user_ids = [user_id for user_id in _user_ids() if user_id not in ADMIN_USER_IDS]
-    sent = failed = 0
-    for user_id in user_ids:
-        try:
-            send_message(user_id, f"📢 Сообщение от «Мама, тут дешевле!»\n\n{text}")
-            sent += 1
-        except Exception:
-            failed += 1
-    return f"📢 Рассылка завершена\n\n🟢 Отправлено: {sent}\n🔴 Ошибок: {failed}"
-
-
-def _handle_callback(chat_id: int, user_id: int, data: str) -> None:
-    if not is_admin(user_id):
-        return
-    if data == "stats":
-        send_message(chat_id, stats_text(), menu_keyboard())
-    elif data == "health":
-        send_message(chat_id, health_text(), menu_keyboard())
-    elif data == "users":
-        text, keyboard = users_text()
-        send_message(chat_id, text, keyboard)
-    elif data.startswith("u:"):
-        try:
-            chat = int(data.split(":", 1)[1])
-            text, keyboard = _user_text(chat)
-            send_message(chat_id, text, keyboard)
-        except ValueError:
-            send_message(chat_id, "❌ Некорректный Telegram ID.", menu_keyboard())
-    elif data.startswith("ui:"):
-        try:
-            chat = int(data.split(":", 1)[1])
-            text, keyboard = _user_items_text(chat)
-            send_message(chat_id, text, keyboard)
-        except ValueError:
-            send_message(chat_id, "❌ Некорректный Telegram ID.", menu_keyboard())
-    elif data == "watchlist":
-        text, keyboard = watchlist_text()
-        send_message(chat_id, text, keyboard)
-    elif data.startswith("wi:"):
-        try:
-            item_id = int(data.split(":", 1)[1])
-            text, keyboard = _watch_item(item_id)
-            send_message(chat_id, text, keyboard)
-        except ValueError:
-            send_message(chat_id, "❌ Некорректный ID товара.", menu_keyboard())
-    elif data.startswith("wv:"):
-        try:
-            item_id = int(data.split(":", 1)[1])
-            send_message(chat_id, _watch_verify_text(item_id), watch_item_keyboard(item_id))
-        except Exception as exc:
-            send_message(chat_id, f"❌ Проверка не выполнена: {type(exc).__name__}", menu_keyboard())
-    elif data.startswith("wd:"):
-        try:
-            item_id = int(data.split(":", 1)[1])
-            _pending_delete[user_id] = item_id
-            send_message(chat_id, "⚠️ Точно удалить этот товар из Watchlist?", delete_confirm_keyboard(item_id))
-        except ValueError:
-            send_message(chat_id, "❌ Некорректный ID товара.", menu_keyboard())
-    elif data.startswith("wc:"):
-        try:
-            item_id = int(data.split(":", 1)[1])
-            if _pending_delete.get(user_id) != item_id:
-                send_message(chat_id, "❌ Подтверждение устарело.", menu_keyboard())
-                return
-            _pending_delete.pop(user_id, None)
-            result = remove_watchlist_item(item_id)
-            send_message(chat_id, "🗑 Товар удалён." if result else "❌ Товар уже отсутствует.", menu_keyboard())
-        except ValueError:
-            send_message(chat_id, "❌ Некорректный ID товара.", menu_keyboard())
-    elif data == "notifications":
-        text, keyboard = notifications_text()
-        send_message(chat_id, text, keyboard)
-    elif data == "n:all":
-        text, keyboard = notifications_text()
-        send_message(chat_id, text, keyboard)
-    elif data == "n:p10":
-        text, keyboard = notifications_text(min_drop_percent=10)
-        send_message(chat_id, text, keyboard)
-    elif data == "n:a500":
-        text, keyboard = notifications_text(min_drop_amount=500)
-        send_message(chat_id, text, keyboard)
-    elif data == "search":
-        send_message(chat_id, _search_check(), menu_keyboard())
-    elif data == "sources":
-        send_message(chat_id, sources_text(), menu_keyboard())
-    elif data == "broadcast":
-        _pending_broadcast.add(user_id)
-        send_message(chat_id, "📢 Напиши следующим сообщением текст рассылки.\n\nДля отмены: /cancel", menu_keyboard())
-    elif data == "menu":
-        _show_menu(chat_id)
-
-
-def handle_text(chat_id: int, user_id: int, text: str) -> None:
-    if not is_admin(user_id):
-        return
-    command = text.strip().lower()
-    if command == "/cancel":
-        _pending_broadcast.discard(user_id)
-        _pending_delete.pop(user_id, None)
-        send_message(chat_id, "Отменено.", menu_keyboard())
-        return
-    if user_id in _pending_broadcast and not command.startswith("/"):
-        _pending_broadcast.discard(user_id)
-        send_message(chat_id, _broadcast(text), menu_keyboard())
-        return
-    if command in {"/start", "/admin", "/menu"}:
-        _show_menu(chat_id)
-    elif command == "/stats":
-        send_message(chat_id, stats_text(), menu_keyboard())
-    elif command in {"/health", "/system"}:
-        send_message(chat_id, health_text(), menu_keyboard())
-    elif command == "/users":
-        text_out, keyboard = users_text()
-        send_message(chat_id, text_out, keyboard)
-    elif command == "/watchlist":
-        text_out, keyboard = watchlist_text()
-        send_message(chat_id, text_out, keyboard)
-    elif command == "/notifications":
-        text_out, keyboard = notifications_text()
-        send_message(chat_id, text_out, keyboard)
-    elif command == "/search":
-        send_message(chat_id, _search_check(), menu_keyboard())
-    elif command == "/sources":
-        send_message(chat_id, sources_text(), menu_keyboard())
-    elif command == "/broadcast":
-        _pending_broadcast.add(user_id)
-        send_message(chat_id, "📢 Напиши текст рассылки следующим сообщением.\n\n/cancel — отменить", menu_keyboard())
-    else:
-        send_message(chat_id, "Выбери действие в панели администратора.", menu_keyboard())
-
-
-def run_once(offset: int | None = None) -> int | None:
-    if not enabled():
-        raise RuntimeError("ADMIN_BOT_TOKEN and ADMIN_USER_IDS are required")
-    payload: dict[str, Any] = {"timeout": 5, "allowed_updates": ["message", "callback_query"]}
-    if offset is not None:
-        payload["offset"] = offset
-    updates = _api("getUpdates", payload).get("result", [])
-    next_offset = offset
-    for update in updates:
-        next_offset = int(update["update_id"]) + 1
-        callback = update.get("callback_query")
-        if callback:
-            message = callback.get("message", {})
-            user = callback.get("from", {})
-            chat_id = message.get("chat", {}).get("id")
-            user_id = user.get("id")
-            try:
-                _api("answerCallbackQuery", {"callback_query_id": callback["id"]})
-            except Exception:
-                pass
-            if chat_id is not None and user_id is not None:
-                _handle_callback(int(chat_id), int(user_id), str(callback.get("data") or ""))
-            continue
-        message = update.get("message", {})
-        user_id = message.get("from", {}).get("id")
-        chat_id = message.get("chat", {}).get("id")
-        text = message.get("text")
-        if chat_id is not None and user_id is not None and isinstance(text, str):
-            handle_text(int(chat_id), int(user_id), text)
-    return next_offset
