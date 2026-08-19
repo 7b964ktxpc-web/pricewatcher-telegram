@@ -4,7 +4,7 @@ import re
 from typing import Any
 from urllib.parse import urlparse
 
-from web_product_extractor import extract_product
+from web_product_extractor import extract_product_page
 from web_research_engine import fetch_page
 
 PRICE_RE = re.compile(r"(?<!\d)(\d{1,3}(?:[\s\u00a0]\d{3})*(?:[.,]\d{1,2})?|\d{2,6})(?:\s*)(?:₽|руб(?:\.|лей|ля)?|RUB)\b", re.I)
@@ -35,11 +35,11 @@ def verify_url(url: str, expected_title: str | None = None, expected_price: floa
     if not page.get("ok"):
         return {"url": url, "verified": False, "status": page.get("status"), "error": page.get("error", "http_error")}
 
-    product = extract_product(page.get("raw_html", ""), page.get("final_url", url))
+    products = extract_product_page(page, expected_title or "")
+    product = next((item for item in products if item.get("price") is not None), products[0] if products else None)
     extracted_price = product.get("price") if product else None
     text_prices = _numbers(page.get("text", ""))
     if extracted_price is None and text_prices:
-        # Do not pretend every number is the product price; this is only a fallback signal.
         extracted_price = text_prices[0]
 
     title = (product or {}).get("title") or page.get("title") or ""
@@ -53,7 +53,7 @@ def verify_url(url: str, expected_title: str | None = None, expected_price: floa
     if expected_price is not None and extracted_price is not None:
         price_match = abs(float(extracted_price) - float(expected_price)) < 0.01
 
-    structured = bool(product and product.get("price") is not None)
+    structured = bool(product and product.get("extra", {}).get("extraction") == "json-ld")
     verified = bool(structured and extracted_price is not None)
     if expected_title is not None:
         verified = verified and title_match is True
