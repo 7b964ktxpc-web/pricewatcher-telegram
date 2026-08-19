@@ -1,0 +1,25 @@
+name: Catalog Refresh
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '17 */4 * * *'
+      timezone: 'Europe/Moscow'
+
+concurrency:
+  group: catalog-refresh
+  cancel-in-progress: true
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Refresh catalog
+        env:
+          DEPLOY_URL: ${{ secrets.PARSER_HEALTH_URL }}
+        run: |
+          set -euo pipefail
+          test -n "$DEPLOY_URL"
+          curl --fail --show-error --silent --retry 3 --retry-delay 5 \
+            --max-time 120 \
+            -X POST "$DEPLOY_URL/api/catalog/refresh"
