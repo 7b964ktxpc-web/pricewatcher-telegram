@@ -1,1 +1,0 @@
-Contract tests use normalizer.normalize_product, the current public core API.
