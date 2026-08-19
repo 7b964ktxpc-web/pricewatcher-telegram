@@ -43,5 +43,23 @@ services:
     volumes:
       - telegram-data:/app/data
 
+  watchlist-checker:
+    build: .
+    command: ["python", "watchlist_checker.py"]
+    restart: unless-stopped
+    depends_on:
+      marketplace-parser:
+        condition: service_healthy
+      telegram-bot:
+        condition: service_started
+    environment:
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      WATCHLIST_DB_PATH: /app/data/watchlist.sqlite3
+      WATCHLIST_CHECK_INTERVAL: ${WATCHLIST_CHECK_INTERVAL:-1800}
+      WATCHLIST_CHECK_TIMEOUT: ${WATCHLIST_CHECK_TIMEOUT:-20}
+      PARSER_PUBLIC_URL: http://marketplace-parser:8010
+    volumes:
+      - telegram-data:/app/data
+
 volumes:
   telegram-data:
