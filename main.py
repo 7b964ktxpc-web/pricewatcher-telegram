@@ -9,7 +9,7 @@ from source_registry import source_status
 from source_discovery import discover_sources
 from catalog_store import init_db, search_catalog, stats as catalog_stats, upsert_products
 
-app = FastAPI(title="Marketplace Parser Feed Engine", version="0.18.0")
+app = FastAPI(title="Marketplace Parser Feed Engine", version="0.18.1")
 init_db()
 
 @app.get("/")
@@ -78,7 +78,12 @@ def ai_plan(q: str = Query(min_length=1, max_length=500)):
 @app.get("/api/web-research")
 def web_research(q: str = Query(min_length=1, max_length=500), limit: int = Query(default=8, ge=1, le=20), fetch_pages: bool = Query(default=True)):
     from agent_web_pipeline import search_web
-    return search_web(q.strip(), limit)
+    # search_web always performs page fetching so the public endpoint cannot
+    # accidentally return a false "page fetched" state when fetch_pages=false.
+    result = search_web(q.strip(), limit)
+    result["fetch_pages_requested"] = fetch_pages
+    result["fetch_pages_effective"] = True
+    return result
 
 @app.get("/api/child-search")
 def child_search(q: str = Query(min_length=1, max_length=500), limit: int = Query(default=12, ge=1, le=30)):
