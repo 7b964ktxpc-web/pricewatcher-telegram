@@ -7,6 +7,8 @@ from typing import Any
 
 import requests
 
+from admin_metrics import snapshot
+
 TELEGRAM_API = "https://api.telegram.org/bot{token}/{method}"
 BOT_TOKEN = os.getenv("ADMIN_BOT_TOKEN", "").strip()
 ADMIN_USER_IDS = {int(x.strip()) for x in os.getenv("ADMIN_USER_IDS", "").split(",") if x.strip().lstrip("-").isdigit()}
@@ -51,12 +53,13 @@ def send_message(chat_id: int, text: str, reply_markup: dict[str, Any] | None = 
 
 def _db_stats() -> dict[str, int]:
     try:
-        with sqlite3.connect(DB_PATH) as conn:
-            watchlist = int(conn.execute("SELECT COUNT(*) FROM watchlist").fetchone()[0]) if _table_exists(conn, "watchlist") else 0
-            users = int(conn.execute("SELECT COUNT(DISTINCT chat_id) FROM watchlist").fetchone()[0]) if _table_exists(conn, "watchlist") else 0
-            notifications = int(conn.execute("SELECT COUNT(*) FROM watchlist_notifications").fetchone()[0]) if _table_exists(conn, "watchlist_notifications") else 0
-        return {"users_with_watchlist": users, "watchlist": watchlist, "notifications": notifications}
-    except sqlite3.Error:
+        stats = snapshot()
+        return {
+            "users_with_watchlist": stats["users"],
+            "watchlist": stats["watchlist"],
+            "notifications": stats["notifications"],
+        }
+    except (sqlite3.Error, OSError):
         return {"users_with_watchlist": 0, "watchlist": 0, "notifications": 0}
 
 
@@ -258,24 +261,3 @@ def validate_startup() -> None:
     bot = result.get("result", {})
     username = bot.get("username") or bot.get("first_name") or "unknown"
     print(f"Admin Telegram bot authenticated: @{username}; admins={sorted(ADMIN_USER_IDS)}", flush=True)
-
-
-def main() -> None:
-    validate_startup()
-    offset = None
-    while True:
-        try:
-            offset = run_once(offset)
-        except KeyboardInterrupt:
-            break
-        except requests.RequestException as exc:
-            print(f"Admin Telegram network error: {exc}", flush=True)
-            time.sleep(5)
-        except Exception as exc:
-            print(f"Admin Telegram bot error: {exc}", flush=True)
-            time.sleep(5)
-        time.sleep(0.2)
-
-
-if __name__ == "__main__":
-    main()
