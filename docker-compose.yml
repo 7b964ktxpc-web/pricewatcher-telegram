@@ -36,6 +36,12 @@ services:
       GEMINI_MODEL: ${GEMINI_MODEL:-gemini-2.5-flash}
       VISION_API_URL: ${VISION_API_URL:-https://router.huggingface.co/hf-inference/models/Qwen/Qwen2.5-VL-7B-Instruct}
       VISION_TIMEOUT: ${VISION_TIMEOUT:-45}
+      WATCHLIST_DB_PATH: /app/data/watchlist.sqlite3
       PARSER_PUBLIC_URL: http://marketplace-parser:8010
       TELEGRAM_HISTORY_SIZE: "12"
       TELEGRAM_TIMEOUT: "20"
+    volumes:
+      - telegram-data:/app/data
+
+volumes:
+  telegram-data:
