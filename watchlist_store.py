@@ -2,9 +2,13 @@ from __future__ import annotations
 
 import os
 import sqlite3
+from pathlib import Path
 from typing import Any
 
-DB_PATH = os.getenv("WATCHLIST_DB_PATH", "/app/data/watchlist.sqlite3")
+# Production sets WATCHLIST_DB_PATH=/app/data/watchlist.sqlite3.
+# In CI/local runs, use a project-relative writable path instead of assuming
+# the container's /app directory exists or is writable.
+DB_PATH = os.getenv("WATCHLIST_DB_PATH") or str(Path(__file__).resolve().parent / "data" / "watchlist.sqlite3")
 
 
 def _connect() -> sqlite3.Connection:
