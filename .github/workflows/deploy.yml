@@ -9,6 +9,7 @@ on:
 
 permissions:
   contents: read
+  statuses: write
 
 concurrency:
   group: production-deploy
@@ -55,6 +56,7 @@ jobs:
           ssh-keyscan -H "$TIMEWEB_HOST" >> "$HOME/.ssh/known_hosts"
 
       - name: Deploy and verify
+        id: deploy_verify
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           ADMIN_BOT_TOKEN: ${{ secrets.ADMIN_BOT_TOKEN }}
@@ -187,3 +189,28 @@ jobs:
           docker compose logs --tail=200
           exit 1
           REMOTE
+
+      - name: Publish production deployment status
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DEPLOY_SHA: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
+        run: |
+          set -euo pipefail
+          case "${{ steps.deploy_verify.outcome }}" in
+            success) state=success; description="Production deployment verified" ;;
+            cancelled) state=error; description="Production deployment cancelled" ;;
+            *) state=failure; description="Production deployment failed" ;;
+          esac
+          curl -fsS -X POST \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/$GITHUB_REPOSITORY/statuses/$DEPLOY_SHA" \
+            -d "$(jq -n \
+              --arg state "$state" \
+              --arg context "production-deploy" \
+              --arg target_url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
+              --arg description "$description" \
+              '{state:$state, context:$context, target_url:$target_url, description:$description}')" >/dev/null
+          echo "Published production commit status: $state"
