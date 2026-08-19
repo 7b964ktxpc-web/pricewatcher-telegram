@@ -1,4 +1,5 @@
 from provider_engine import _dedupe, _matches
+from resilient_provider_engine import search_sources
 
 
 def test_query_matches_multiple_product_fields():
@@ -16,3 +17,26 @@ def test_dedupe_prefers_cheaper_items():
     assert len(result) == 2
     assert result[0]["price"] == 1000 or result[0]["price"] == 900
     assert {x["id"] for x in result} == {"1", "2"}
+
+
+def test_default_search_includes_feed_adapters(monkeypatch):
+    calls = []
+
+    def fake_search(query, limit, sources):
+        calls.append(sources[0])
+        return {
+            "query": query,
+            "count": 0,
+            "items": [],
+            "sources": [{"source": sources[0], "status": "not_configured", "items": [], "error": "test"}],
+            "ready": False,
+        }
+
+    monkeypatch.setattr("resilient_provider_engine._search_sources", fake_search)
+    result = search_sources("футболка", 5)
+
+    assert "wildberries_feed" in calls
+    assert "ozon_feed" in calls
+    assert "yandex_market_feed" in calls
+    assert "simaland_feed" in calls
+    assert result["ready"] is False
