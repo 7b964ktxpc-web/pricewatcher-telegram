@@ -16,3 +16,16 @@ services:
       timeout: 5s
       retries: 3
       start_period: 10s
+
+  telegram-bot:
+    build: .
+    command: ["python", "telegram_bot_runner.py"]
+    restart: unless-stopped
+    depends_on:
+      marketplace-parser:
+        condition: service_healthy
+    environment:
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      PARSER_PUBLIC_URL: http://marketplace-parser:8010
+      TELEGRAM_HISTORY_SIZE: "12"
+      TELEGRAM_TIMEOUT: "20"
