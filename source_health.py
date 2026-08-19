@@ -56,6 +56,14 @@ class SourceHealthRegistry:
                 cooldown = min(self.base * (2**exponent), self.maximum)
                 state.cooldown_until = time.monotonic() + cooldown
 
+    def reset(self, source: str | None = None) -> None:
+        """Clear health state; intended for isolated tests and controlled resets."""
+        with self._lock:
+            if source is None:
+                self._states.clear()
+            else:
+                self._states.pop(source, None)
+
     def snapshot(self) -> list[dict[str, Any]]:
         with self._lock:
             now = time.monotonic()
