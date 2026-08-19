@@ -65,7 +65,17 @@ def readiness():
     feeds = inspect_feeds()
     ai = chat_status()
     configured_marketplaces = sum(1 for item in adapters if item.get("configured"))
-    configured_feeds = sum(1 for item in feeds if item.get("configured"))
+
+    # inspect_feeds() returns a structured report, not a list. Keep the
+    # readiness endpoint tolerant of that public shape and derive counts from
+    # its stable fields instead of iterating dictionary keys as feed records.
+    if isinstance(feeds, dict):
+        configured_feeds = len(feeds.get("configured", []))
+        feed_total = int(feeds.get("checked", len(feeds.get("results", []))))
+    else:
+        configured_feeds = sum(1 for item in feeds if isinstance(item, dict) and item.get("configured"))
+        feed_total = len(feeds)
+
     ai_ready = bool(ai.get("qwen") or ai.get("deepseek_configured") or ai.get("groq_configured") or ai.get("gemini_configured"))
     telegram_ready = bool(os.getenv("TELEGRAM_BOT_TOKEN"))
     return {
@@ -73,7 +83,7 @@ def readiness():
         "telegram": {"configured": telegram_ready},
         "ai": {"ready": ai_ready, "providers": ai.get("providers", [])},
         "marketplaces": {"configured": configured_marketplaces, "total": len(adapters), "items": adapters},
-        "feeds": {"configured": configured_feeds, "total": len(feeds), "items": feeds},
+        "feeds": {"configured": configured_feeds, "total": feed_total, "items": feeds},
         "next": "connect at least one marketplace/feed for real product data" if configured_marketplaces + configured_feeds == 0 else "run a real Telegram search",
     }
 
