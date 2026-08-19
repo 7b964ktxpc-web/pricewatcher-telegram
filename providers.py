@@ -9,6 +9,7 @@ from urllib.parse import quote_plus
 import requests
 
 from feed_adapters import FEED_ADAPTERS
+from marketplace_adapters import ADAPTERS, adapter_status
 from normalizer import normalize_product
 from source_health import SourceHealthRegistry
 
@@ -189,7 +190,14 @@ class SimaLandProvider(PublicProvider):
             return result
 
 
-PROVIDERS = {"wildberries": WildberriesProvider(), "ozon": OzonProvider(), "yandex_market": YandexMarketProvider(), "simaland": SimaLandProvider(), **FEED_ADAPTERS}
+PROVIDERS = {
+    "wildberries": WildberriesProvider(),
+    "ozon": OzonProvider(),
+    "yandex_market": YandexMarketProvider(),
+    "simaland": SimaLandProvider(),
+    **FEED_ADAPTERS,
+    **ADAPTERS,
+}
 
 
 def source_health() -> list[dict[str, Any]]:
@@ -209,8 +217,13 @@ def search_sources(query: str, limit: int = 20, sources: list[str] | None = None
             result = adapter.search(query, limit)
             results.append({"source": name, "marketplace": adapter.marketplace, **result})
             continue
+        if name in ADAPTERS:
+            adapter = ADAPTERS[name]
+            result = adapter.search(query, limit)
+            results.append({"source": name, "marketplace": adapter.marketplace, **result})
+            continue
         result = provider.search(query, limit)
         results.append({"source": result.source, "marketplace": result.marketplace, "status": result.status, "items": result.items, "error": result.error})
 
     items = _dedupe([x for r in results for x in r["items"]], limit)
-    return {"query": query, "count": len(items), "items": items, "sources": results, "source_health": source_health()}
+    return {"query": query, "count": len(items), "items": items, "sources": results, "source_health": source_health(), "marketplace_adapters": adapter_status()}
