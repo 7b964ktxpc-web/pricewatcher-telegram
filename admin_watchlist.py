@@ -4,7 +4,7 @@ import sqlite3
 from typing import Any
 
 from price_verifier import verify_url
-from watchlist_store import DB_PATH
+from watchlist_store import DB_PATH, update_price, price_history
 
 
 def _connect() -> sqlite3.Connection:
@@ -15,19 +15,13 @@ def _connect() -> sqlite3.Connection:
 
 def items(limit: int = 20) -> list[dict[str, Any]]:
     with _connect() as conn:
-        rows = conn.execute(
-            "SELECT rowid AS id, chat_id, title, url, last_price, source, updated_at "
-            "FROM watchlist ORDER BY updated_at DESC LIMIT ?", (limit,)
-        ).fetchall()
+        rows = conn.execute("SELECT rowid AS id, chat_id, title, url, last_price, source, updated_at FROM watchlist ORDER BY updated_at DESC LIMIT ?", (limit,)).fetchall()
     return [dict(row) for row in rows]
 
 
 def get(item_id: int) -> dict[str, Any] | None:
     with _connect() as conn:
-        row = conn.execute(
-            "SELECT rowid AS id, chat_id, title, url, last_price, source, updated_at "
-            "FROM watchlist WHERE rowid = ?", (item_id,)
-        ).fetchone()
+        row = conn.execute("SELECT rowid AS id, chat_id, item_key, title, url, last_price, source, updated_at FROM watchlist WHERE rowid = ?", (item_id,)).fetchone()
     return dict(row) if row else None
 
 
@@ -43,4 +37,9 @@ def verify(item_id: int) -> dict[str, Any]:
     if not item:
         return {"ok": False, "error": "not_found", "item_id": item_id}
     result = verify_url(item["url"], item.get("title"), item.get("last_price"))
-    return {"ok": True, "item": item, "verification": result}
+    current = result.get("price") if isinstance(result, dict) else None
+    verified = bool(result.get("verified")) if isinstance(result, dict) else False
+    if verified and isinstance(current, (int, float)):
+        update_price(int(item["chat_id"]), str(item["item_key"]), float(current))
+        item["last_price"] = float(current)
+    return {"ok": True, "item": item, "verification": result, "history": price_history(int(item["chat_id"]), str(item["item_key"]), 10)}
