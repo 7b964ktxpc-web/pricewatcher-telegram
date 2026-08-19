@@ -1,4 +1,5 @@
 from concurrent.futures import ThreadPoolExecutor, as_completed
+import os
 
 from fastapi import FastAPI, HTTPException, Query
 from normalizer import normalize_product
@@ -6,7 +7,7 @@ from resilient_provider_engine import search_sources
 from providers import PROVIDERS
 from source_registry import source_status
 
-app = FastAPI(title="Marketplace Parser Feed Engine", version="0.9.2")
+app = FastAPI(title="Marketplace Parser Feed Engine", version="0.10.0")
 
 @app.get("/")
 def root():
@@ -43,6 +44,7 @@ def ai_plan(q: str = Query(min_length=1, max_length=500)):
 def agent_search(q: str = Query(min_length=1, max_length=500), limit: int = Query(default=20, ge=1, le=50)):
     from agent_router import build_plan, expand_queries, resolve_sources
     from deal_ranker import rank_items
+    from product_matcher import group_products
 
     query_text = q.strip()
     plan = build_plan(query_text)
@@ -50,8 +52,7 @@ def agent_search(q: str = Query(min_length=1, max_length=500), limit: int = Quer
     sources = resolve_sources(requested)
     queries = expand_queries(plan, query_text)
 
-    # Search query variants concurrently; each variant also fans out across sources.
-    max_workers = max(1, min(len(queries), int(__import__("os").getenv("QUERY_SEARCH_WORKERS", str(len(queries))))))
+    max_workers = max(1, min(len(queries), int(os.getenv("QUERY_SEARCH_WORKERS", str(len(queries))))))
     runs_by_query: dict[str, dict] = {}
     with ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="query") as executor:
         futures = {executor.submit(search_sources, query, max(1, min(limit, 20)), sources or None): query for query in queries}
@@ -71,11 +72,15 @@ def agent_search(q: str = Query(min_length=1, max_length=500), limit: int = Quer
     if isinstance(max_price, (int, float)):
         collected = [x for x in collected if isinstance(x.get("price"), (int, float)) and x["price"] <= max_price]
 
-    items = rank_items(collected, plan, limit)
+    ranked = rank_items(collected, plan, max(1, limit * 3))
+    groups = group_products(ranked, threshold=float(os.getenv("PRODUCT_MATCH_THRESHOLD", "0.72")))
+    items = [group["best_offer"] | {"offer_count": group["offer_count"], "lowest_price": group["lowest_price"], "match_group": group["match_group"]} for group in groups[:limit]]
+
     return {
         "query": query_text,
         "count": len(items),
         "items": items,
+        "product_groups": groups[:limit],
         "queries": queries,
         "ai_plan": plan,
         "requested_sources": requested,
