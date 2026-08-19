@@ -10,16 +10,12 @@ from urllib.parse import urlsplit, urlunsplit
 import requests
 
 from telegram_bot import send_message
-from watchlist_store import list_all, update_price
+from watchlist_store import list_all, notification_sent, update_price
 
 PARSER_BASE_URL = os.getenv("PARSER_PUBLIC_URL", "http://127.0.0.1:8010").rstrip("/")
 CHECK_INTERVAL = max(60, int(os.getenv("WATCHLIST_CHECK_INTERVAL", "1800")))
 TIMEOUT = max(5.0, float(os.getenv("WATCHLIST_CHECK_TIMEOUT", "20")))
 NOTIFICATION_COOLDOWN = max(0, int(os.getenv("WATCHLIST_NOTIFICATION_COOLDOWN", "21600")))
-
-# In-process notification state. The persisted last_price remains the source of truth
-# for price tracking; this cache only prevents duplicate alerts during a checker lifetime.
-_notified_events: dict[str, tuple[float, float]] = {}
 
 
 def _price(item: dict[str, Any]) -> float | None:
@@ -115,18 +111,6 @@ def _event_key(item: dict[str, Any], new_price: float) -> str:
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
-def _should_notify(item: dict[str, Any], old_price: float, new_price: float) -> bool:
-    key = _event_key(item, new_price)
-    now = time.time()
-    previous = _notified_events.get(key)
-    if previous is not None:
-        notified_at, _ = previous
-        if NOTIFICATION_COOLDOWN == 0 or now - notified_at < NOTIFICATION_COOLDOWN:
-            return False
-    _notified_events[key] = (now, new_price)
-    return True
-
-
 def check_once() -> int:
     checked = 0
     for item in list_all():
@@ -135,14 +119,20 @@ def check_once() -> int:
             new_price = _best_price(item, offers)
             if new_price is None:
                 continue
+            chat_id = int(item["chat_id"])
+            item_key = str(item["item_key"])
             old_price = _price({"price": item.get("last_price")})
-            update_price(int(item["chat_id"]), str(item["item_key"]), new_price)
+            update_price(chat_id, item_key, new_price)
             checked += 1
-            if old_price is not None and new_price < old_price and _should_notify(item, old_price, new_price):
+            if old_price is not None and new_price < old_price:
+                event_key = _event_key(item, new_price)
+                already_notified = notification_sent(event_key, chat_id, item_key, new_price, time.time(), NOTIFICATION_COOLDOWN)
+                if already_notified:
+                    continue
                 drop = old_price - new_price
                 percent = drop / old_price * 100 if old_price else 0
                 send_message(
-                    int(item["chat_id"]),
+                    chat_id,
                     (
                         f"📉 Цена снизилась!\n\n{item['title']}\n"
                         f"💰 Было: {old_price:,.0f} ₽\n"
