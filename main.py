@@ -3,59 +3,55 @@ from normalizer import normalize_product
 from provider_engine import search_sources
 from providers import PROVIDERS
 
-app = FastAPI(title="Marketplace Parser Feed Engine", version="0.4.0")
-
+app = FastAPI(title="Marketplace Parser Feed Engine", version="0.5.0")
 
 @app.get("/")
 def root():
     return {"service": "marketplace-parser", "version": app.version, "status": "ready"}
 
-
 @app.get("/health")
 def health():
     return {"ok": True, "service": "marketplace-parser", "version": app.version}
-
 
 @app.get("/api/sources")
 def sources():
     return {"sources": list(PROVIDERS), "mode": "independent-public-adapters", "feed_env": {"wildberries_feed": "WB_FEED_URL", "ozon_feed": "OZON_FEED_URL", "yandex_market_feed": "YANDEX_MARKET_FEED_URL", "simaland_feed": "SIMALAND_FEED_URL"}}
 
-
 @app.get("/api/ai/status")
 def ai_status():
     from ai_agent import agent_status
-    return agent_status()
-
+    from agent_router import router_status
+    return {"qwen": agent_status(), "router": router_status()}
 
 @app.get("/api/ai/plan")
 def ai_plan(q: str = Query(min_length=1, max_length=500)):
-    from ai_agent import plan_search
+    from agent_router import build_plan
     try:
-        return {"ok": True, "plan": plan_search(q)}
+        return {"ok": True, "plan": build_plan(q)}
     except Exception as exc:
         raise HTTPException(503, f"AI unavailable: {exc}") from exc
-
 
 @app.get("/api/agent/search")
 def agent_search(q: str = Query(min_length=1, max_length=500), limit: int = Query(default=20, ge=1, le=50)):
-    """AI parses the request; deterministic adapters perform catalog search."""
-    from ai_agent import plan_search
-    try:
-        plan = plan_search(q.strip())
-    except Exception as exc:
-        raise HTTPException(503, f"AI unavailable: {exc}") from exc
-
+    from agent_router import build_plan, expand_queries
+    plan = build_plan(q.strip())
     marketplaces = [str(x) for x in plan.get("marketplaces", []) if x in {"wildberries", "ozon", "yandex_market", "simaland"}]
-    result = search_sources(plan.get("query") or q.strip(), min(limit, int(plan.get("limit") or limit)), marketplaces or None)
-
+    queries = expand_queries(plan, q.strip())
+    runs = [search_sources(query, max(1, min(limit, 20)), marketplaces or None) for query in queries]
+    seen: set[tuple[str, str]] = set()
+    items: list[dict] = []
+    for run in runs:
+        for item in run.get("items", []):
+            key = (str(item.get("marketplace") or ""), str(item.get("product_id") or item.get("id") or item.get("url") or ""))
+            if key not in seen:
+                seen.add(key)
+                items.append(item)
     max_price = plan.get("max_price")
     if isinstance(max_price, (int, float)):
-        result["items"] = [x for x in result.get("items", []) if isinstance(x.get("price"), (int, float)) and x["price"] <= max_price]
-        result["count"] = len(result["items"])
-    result["ai_plan"] = plan
-    result["agent"] = "qwen-huggingface"
-    return result
-
+        items = [x for x in items if isinstance(x.get("price"), (int, float)) and x["price"] <= max_price]
+    items.sort(key=lambda x: (x.get("price") is None, x.get("price") if isinstance(x.get("price"), (int, float)) else float("inf"), -(x.get("discount_percent") or 0)))
+    items = items[:limit]
+    return {"query": q.strip(), "count": len(items), "items": items, "queries": queries, "ai_plan": plan, "agent": "multi-agent-router", "runs": [{"query": r.get("query"), "count": r.get("count"), "sources": r.get("sources", [])} for r in runs], "ready": bool(items)}
 
 @app.get("/api/search")
 def search(q: str = Query(min_length=1, max_length=300), limit: int = Query(default=20, ge=1, le=100), source: str | None = Query(default=None)):
@@ -64,7 +60,6 @@ def search(q: str = Query(min_length=1, max_length=300), limit: int = Query(defa
     if source and source not in allowed:
         raise HTTPException(400, f"Unknown source: {source}")
     return search_sources(q.strip(), limit, selected)
-
 
 @app.get("/api/test-product")
 def test_product():
