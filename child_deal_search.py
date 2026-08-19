@@ -2,10 +2,10 @@ from __future__ import annotations
 
 from typing import Any
 
+from agent_web_pipeline import search_web
 from child_query_parser import build_search_queries, parse_child_query
 from product_offer_matcher import group_offers
 from verified_deal_pipeline import build_verified_deals
-from web_research_engine import search_web
 
 
 def search_child_deals(text: str, max_results: int = 12) -> dict[str, Any]:
@@ -15,7 +15,8 @@ def search_child_deals(text: str, max_results: int = 12) -> dict[str, Any]:
     seen: set[str] = set()
 
     for query in queries:
-        for item in search_web(query, max_results=max_results):
+        result = search_web(query, limit=max_results)
+        for item in result.get("items", []):
             url = item.get("url")
             if not url or url in seen:
                 continue
