@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import os
 
-MIN_DROP_PERCENT = max(0.0, float(os.getenv("WATCHLIST_MIN_DROP_PERCENT", "1.0")))
+# A notification should represent a meaningful saving, not a routine price wobble.
+MIN_DROP_PERCENT = max(0.0, float(os.getenv("WATCHLIST_MIN_DROP_PERCENT", "3.0")))
 MIN_DROP_AMOUNT = max(0.0, float(os.getenv("WATCHLIST_MIN_DROP_AMOUNT", "100")))
 
 
