@@ -8,7 +8,7 @@ from providers import PROVIDERS
 from source_registry import source_status
 from source_discovery import discover_sources
 
-app = FastAPI(title="Marketplace Parser Feed Engine", version="0.12.0")
+app = FastAPI(title="Marketplace Parser Feed Engine", version="0.13.0")
 
 @app.get("/")
 def root():
@@ -30,6 +30,11 @@ def discovery():
 def feed_adapters():
     from feed_adapter_manager import inspect_feeds
     return inspect_feeds()
+
+@app.get("/api/feed-import")
+def feed_import(limit: int = Query(default=5000, ge=1, le=50000)):
+    from feed_import_engine import import_all
+    return import_all(limit=limit)
 
 @app.get("/api/source-health")
 def source_health():
