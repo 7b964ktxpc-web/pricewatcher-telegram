@@ -33,16 +33,13 @@ def _numbers(text: str) -> list[float]:
 def verify_url(url: str, expected_title: str | None = None, expected_price: float | None = None) -> dict[str, Any]:
     page = fetch_page(url)
     if not page.get("ok"):
-        return {"url": url, "verified": False, "status": page.get("status"), "error": page.get("error", "http_error")}
+        return {"url": url, "verified": False, "status": page.get("status"), "error": page.get("error", "http_error"), "verification_method": "http_error"}
 
     products = extract_product_page(page, expected_title or "")
     product = next((item for item in products if item.get("price") is not None), products[0] if products else None)
     extracted_price = product.get("price") if product else None
-    text_prices = _numbers(page.get("text", ""))
-    if extracted_price is None and text_prices:
-        extracted_price = text_prices[0]
-
     title = (product or {}).get("title") or page.get("title") or ""
+
     title_match = None
     if expected_title and title:
         wanted = set(re.findall(r"[\wа-яё]+", expected_title.lower()))
@@ -53,6 +50,7 @@ def verify_url(url: str, expected_title: str | None = None, expected_price: floa
     if expected_price is not None and extracted_price is not None:
         price_match = abs(float(extracted_price) - float(expected_price)) < 0.01
 
+    # A price found only in arbitrary page text is never enough to call a deal verified.
     structured = bool(product and product.get("extra", {}).get("extraction") == "json-ld")
     verified = bool(structured and extracted_price is not None)
     if expected_title is not None:
@@ -60,12 +58,20 @@ def verify_url(url: str, expected_title: str | None = None, expected_price: floa
     if expected_price is not None:
         verified = verified and price_match is True
 
+    if verified:
+        status = "verified"
+    elif product and extracted_price is not None:
+        status = "needs_review"
+    else:
+        status = "discovery_only"
+
     return {
         "url": url,
         "final_url": page.get("final_url", url),
         "source": page.get("source"),
         "verified": verified,
-        "verification_method": "json_ld_product_offer" if structured else "text_price_fallback",
+        "verification_status": status,
+        "verification_method": "json_ld_product_offer" if structured else "page_product_extraction",
         "title": title,
         "price": extracted_price,
         "expected_price": expected_price,
@@ -73,7 +79,7 @@ def verify_url(url: str, expected_title: str | None = None, expected_price: floa
         "price_match": price_match,
         "status": page.get("status"),
         "same_domain": _same_domain(url, page.get("final_url", url)),
-        "discovery_only": not verified,
+        "discovery_only": status == "discovery_only",
     }
 
 
