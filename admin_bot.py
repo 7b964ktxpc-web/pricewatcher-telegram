@@ -7,6 +7,7 @@ from typing import Any
 import requests
 
 from admin_metrics import snapshot
+from admin_notifications import format_notification, list_notifications
 from admin_sources import format_text
 from admin_users import users as list_users, user_items
 from admin_watchlist import items as watchlist_items, remove as remove_watchlist_item, verify as verify_watchlist_item
@@ -43,8 +44,9 @@ def menu_keyboard() -> dict[str, Any]:
     return {"inline_keyboard": [
         [{"text": "📊 Статистика", "callback_data": "stats"}, {"text": "🩺 Система", "callback_data": "health"}],
         [{"text": "👥 Пользователи", "callback_data": "users"}, {"text": "🔔 Watchlist", "callback_data": "watchlist"}],
-        [{"text": "🔎 Поиск", "callback_data": "search"}, {"text": "📦 Источники", "callback_data": "sources"}],
-        [{"text": "📢 Рассылка", "callback_data": "broadcast"}, {"text": "🔄 Обновить", "callback_data": "menu"}],
+        [{"text": "📉 Уведомления", "callback_data": "notifications"}, {"text": "📦 Источники", "callback_data": "sources"}],
+        [{"text": "🔎 Поиск", "callback_data": "search"}, {"text": "📢 Рассылка", "callback_data": "broadcast"}],
+        [{"text": "🔄 Обновить", "callback_data": "menu"}],
     ]}
 
 
@@ -90,6 +92,14 @@ def delete_confirm_keyboard(item_id: int) -> dict[str, Any]:
     ]]}
 
 
+def notifications_keyboard() -> dict[str, Any]:
+    return {"inline_keyboard": [
+        [{"text": "📉 Все", "callback_data": "n:all"}],
+        [{"text": "🔥 ≥10%", "callback_data": "n:p10"}, {"text": "💰 ≥500 ₽", "callback_data": "n:a500"}],
+        [{"text": "↩️ В меню", "callback_data": "menu"}],
+    ]}
+
+
 def send_message(chat_id: int, text: str, reply_markup: dict[str, Any] | None = None) -> None:
     payload: dict[str, Any] = {"chat_id": chat_id, "text": text}
     if reply_markup:
@@ -103,11 +113,6 @@ def _db_stats() -> dict[str, int]:
         return {"users_with_watchlist": stats["users"], "watchlist": stats["watchlist"], "notifications": stats["notifications"]}
     except (sqlite3.Error, OSError):
         return {"users_with_watchlist": 0, "watchlist": 0, "notifications": 0}
-
-
-def _table_exists(conn: sqlite3.Connection, name: str) -> bool:
-    row = conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (name,)).fetchone()
-    return row is not None
 
 
 def _user_ids() -> list[int]:
@@ -211,6 +216,17 @@ def _watch_verify_text(item_id: int) -> str:
     old_text = f"{float(old_price):,.0f} ₽".replace(",", " ") if old_price is not None else "нет"
     new_text = f"{float(new_price):,.0f} ₽".replace(",", " ") if new_price is not None else "не найдена"
     return ("🔄 Проверка цены\n\n" f"📦 {item.get('title') or 'Без названия'}\n" f"💰 Было: {old_text}\n" f"💰 Сейчас: {new_text}\n" f"🔎 Статус: {status}\n" f"🧪 Метод: {verification.get('verification_method', 'unknown')}\n" f"🔗 {verification.get('final_url') or item.get('url')}")
+
+
+def notifications_text(min_drop_amount: float = 0.0, min_drop_percent: float = 0.0) -> tuple[str, dict[str, Any]]:
+    rows = list_notifications(20, min_drop_amount=min_drop_amount, min_drop_percent=min_drop_percent)
+    if not rows:
+        return "📉 Price Drop\n\nСобытий по выбранному фильтру пока нет.", notifications_keyboard()
+    lines = ["📉 Price Drop", ""]
+    for row in rows:
+        lines.append(format_notification(row))
+        lines.append("")
+    return "\n".join(lines).strip(), notifications_keyboard()
 
 
 def sources_text() -> str:
@@ -317,6 +333,18 @@ def _handle_callback(chat_id: int, user_id: int, data: str) -> None:
             send_message(chat_id, "🗑 Товар удалён." if result else "❌ Товар уже отсутствует.", menu_keyboard())
         except ValueError:
             send_message(chat_id, "❌ Некорректный ID товара.", menu_keyboard())
+    elif data == "notifications":
+        text, keyboard = notifications_text()
+        send_message(chat_id, text, keyboard)
+    elif data == "n:all":
+        text, keyboard = notifications_text()
+        send_message(chat_id, text, keyboard)
+    elif data == "n:p10":
+        text, keyboard = notifications_text(min_drop_percent=10)
+        send_message(chat_id, text, keyboard)
+    elif data == "n:a500":
+        text, keyboard = notifications_text(min_drop_amount=500)
+        send_message(chat_id, text, keyboard)
     elif data == "search":
         send_message(chat_id, _search_check(), menu_keyboard())
     elif data == "sources":
@@ -352,6 +380,9 @@ def handle_text(chat_id: int, user_id: int, text: str) -> None:
         send_message(chat_id, text_out, keyboard)
     elif command == "/watchlist":
         text_out, keyboard = watchlist_text()
+        send_message(chat_id, text_out, keyboard)
+    elif command == "/notifications":
+        text_out, keyboard = notifications_text()
         send_message(chat_id, text_out, keyboard)
     elif command == "/search":
         send_message(chat_id, _search_check(), menu_keyboard())
