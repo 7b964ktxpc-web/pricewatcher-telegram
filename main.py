@@ -2,8 +2,9 @@ from fastapi import FastAPI, HTTPException, Query
 from normalizer import normalize_product
 from provider_engine import search_sources
 from providers import PROVIDERS
+from source_registry import source_status
 
-app = FastAPI(title="Marketplace Parser Feed Engine", version="0.6.0")
+app = FastAPI(title="Marketplace Parser Feed Engine", version="0.7.0")
 
 @app.get("/")
 def root():
@@ -15,7 +16,20 @@ def health():
 
 @app.get("/api/sources")
 def sources():
-    return {"sources": list(PROVIDERS), "mode": "independent-public-adapters", "feed_env": {"wildberries_feed": "WB_FEED_URL", "ozon_feed": "OZON_FEED_URL", "yandex_market_feed": "YANDEX_MARKET_FEED_URL", "simaland_feed": "SIMALAND_FEED_URL"}}
+    return {
+        "sources": list(PROVIDERS),
+        "registry": source_status(),
+        "mode": "independent-public-adapters",
+        "feed_env": {
+            "wildberries_feed": "WB_FEED_URL",
+            "ozon_feed": "OZON_FEED_URL",
+            "yandex_market_feed": "YANDEX_MARKET_FEED_URL",
+            "simaland_feed": "SIMALAND_FEED_URL",
+            "detmir_feed": "DETMIR_FEED_URL",
+            "akusherstvo_feed": "AKUSHERSTVO_FEED_URL",
+            "korablik_feed": "KORABLIK_FEED_URL",
+        },
+    }
 
 @app.get("/api/ai/status")
 def ai_status():
