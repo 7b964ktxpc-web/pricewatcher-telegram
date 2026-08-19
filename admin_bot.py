@@ -221,3 +221,21 @@ def _watch_verify_text(item_id: int) -> str:
     old_text = f"{float(old_price):,.0f} ₽".replace(",", " ") if old_price is not None else "нет"
     new_text = f"{float(new_price):,.0f} ₽".replace(",", " ") if new_price is not None else "не найдена"
     return ("🔄 Проверка цены\n\n" f"📦 {item.get('title') or 'Без названия'}\n" f"💰 Было: {old_text}\n" f"💰 Сейчас: {new_text}\n" f"🔎 Статус: {status}\n" f"🧪 Метод: {verification.get('verification_method', 'unknown')}\n" f"🔗 {verification.get('final_url') or item.get('url')}")
+
+
+def handle_text(chat_id: int, user_id: int | None, text: str) -> None:
+    """Route simple admin commands while enforcing the admin allow-list."""
+    if not is_admin(user_id):
+        return
+    command = (text or "").strip().split()[0].lower() if (text or "").strip() else ""
+    handlers = {
+        "/stats": lambda: send_message(chat_id, stats_text(), menu_keyboard()),
+        "/health": lambda: send_message(chat_id, "🩺 Система\n\nParser: " + PARSER_BASE_URL, menu_keyboard()),
+        "/users": lambda: send_message(chat_id, *users_text()),
+        "/watchlist": lambda: send_message(chat_id, *watchlist_text()),
+        "/search": lambda: send_message(chat_id, "🔎 Поиск\n\nИспользуй поиск через пользовательского бота.", menu_keyboard()),
+        "/sources": lambda: send_message(chat_id, format_text(), menu_keyboard()),
+    }
+    handler = handlers.get(command)
+    if handler:
+        handler()
