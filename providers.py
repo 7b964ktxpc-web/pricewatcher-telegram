@@ -114,10 +114,26 @@ class YandexMarketProvider(PublicProvider):
             return ProviderResult(self.name, self.marketplace, [], "error", str(e))
 
 
+class SimaLandProvider(PublicProvider):
+    name = "simaland-public"
+    marketplace = "simaland"
+
+    def search(self, query: str, limit: int = 20) -> ProviderResult:
+        url = f"https://www.sima-land.ru/search/?q={quote_plus(query)}"
+        try:
+            r = self.session().get(url, timeout=TIMEOUT, allow_redirects=True)
+            if r.status_code != 200:
+                return ProviderResult(self.name, self.marketplace, [], "blocked", f"HTTP {r.status_code}")
+            return ProviderResult(self.name, self.marketplace, [], "html_only", "search page reachable; use an approved catalog/feed for structured import")
+        except requests.RequestException as e:
+            return ProviderResult(self.name, self.marketplace, [], "error", str(e))
+
+
 PROVIDERS = {
     "wildberries": WildberriesProvider(),
     "ozon": OzonProvider(),
     "yandex_market": YandexMarketProvider(),
+    "simaland": SimaLandProvider(),
 }
 
 
