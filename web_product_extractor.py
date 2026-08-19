@@ -8,7 +8,7 @@ from urllib.parse import urlparse
 
 from normalizer import normalize_product
 
-PRICE_RE = re.compile(r"(?<![\d])(?:\d{1,3}(?:[\s\u00a0]\d{3})+|\d{2,6})(?:[,.]\d{1,2})?\s*(?:₽|руб(?:\.|лей)?|RUB)\b", re.I)
+PRICE_RE = re.compile(r"(?<![\d])(?:\d{1,3}(?:[\s\u00a0]\d{3})+|\d{2,6})(?:[,.]\d{1,2})?\s*(?:₽|руб(?:\.|лей)?|RUB)", re.I)
 
 def _clean(value: Any) -> str:
     text = html.unescape(str(value or ""))
@@ -73,14 +73,9 @@ def extract_product_page(page: dict[str, Any], query: str = "") -> list[dict[str
             title=title, price=price, old_price=old_price, image=image, url=product_url, available=available,
             extra={"extraction": "json-ld", "discovery_only": False}))
     if results: return results
-
     title = _fallback_title(raw)
     prices = _fallback_prices(raw)
-    # Do not manufacture a discovery offer from an empty page or from a query
-    # string alone. A discovery result needs observable page evidence.
     if not raw or (not title and not prices): return []
     return [normalize_product(source=source, marketplace=source, product_id=url, title=title or query,
-        price=prices[0] if prices else None,
-        old_price=prices[1] if len(prices) > 1 and prices[1] > prices[0] else None,
-        url=url, available=None,
-        extra={"extraction": "text-fallback", "discovery_only": True, "price_candidates": prices[:8]})]
+        price=prices[0] if prices else None, old_price=prices[1] if len(prices) > 1 and prices[1] > prices[0] else None,
+        url=url, available=None, extra={"extraction": "text-fallback", "discovery_only": True, "price_candidates": prices[:8]})]
