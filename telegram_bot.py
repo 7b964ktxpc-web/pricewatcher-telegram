@@ -17,6 +17,8 @@ PARSER_BASE_URL = os.getenv("PARSER_PUBLIC_URL", "http://127.0.0.1:8010").rstrip
 MAX_HISTORY = int(os.getenv("TELEGRAM_HISTORY_SIZE", "12"))
 TIMEOUT = float(os.getenv("TELEGRAM_TIMEOUT", "20"))
 _history: dict[int, deque[dict[str, str]]] = defaultdict(lambda: deque(maxlen=MAX_HISTORY))
+_last_results: dict[int, list[dict[str, Any]]] = defaultdict(list)
+_watchlist: dict[int, set[str]] = defaultdict(set)
 
 
 def enabled() -> bool:
@@ -43,6 +45,19 @@ def menu_keyboard() -> dict[str, Any]:
     return {"inline_keyboard": [[{"text": "🔎 Найти дешевле", "callback_data": "search"}, {"text": "📸 По фото", "callback_data": "photo"}], [{"text": "💬 Просто поговорить", "callback_data": "chat"}, {"text": "ℹ️ Помощь", "callback_data": "help"}]]}
 
 
+def deal_keyboard(item: dict[str, Any], index: int) -> dict[str, Any]:
+    rows: list[list[dict[str, str]]] = []
+    url = item.get("url") or item.get("product_url")
+    if isinstance(url, str) and url.startswith(("http://", "https://")):
+        rows.append([{"text": "🛒 Купить", "url": url}])
+    rows.append([
+        {"text": "💰 Найти дешевле", "callback_data": f"cheaper:{index}"},
+        {"text": "🔄 Проверить", "callback_data": f"refresh:{index}"},
+    ])
+    rows.append([{"text": "🔔 Следить", "callback_data": f"watch:{index}"}])
+    return {"inline_keyboard": rows}
+
+
 def _remember(chat_id: int, role: str, text: str) -> None:
     _history[chat_id].append({"role": role, "content": text})
 
@@ -51,34 +66,90 @@ def _context(chat_id: int) -> list[dict[str, str]]:
     return list(_history[chat_id])
 
 
+def _format_price(value: Any) -> str:
+    if isinstance(value, (int, float)):
+        return f"{float(value):,.0f} ₽".replace(",", " ")
+    return "цена уточняется"
+
+
 def _search(chat_id: int, query: str) -> None:
     try:
         build_plan(query)
     except Exception:
         pass
     try:
-        response = requests.get(f"{PARSER_BASE_URL}/api/agent/search", params={"q": query, "limit": 8}, timeout=TIMEOUT)
+        response = requests.get(f"{PARSER_BASE_URL}/api/child-search", params={"q": query, "limit": 8}, timeout=TIMEOUT)
         response.raise_for_status()
         data = response.json()
     except Exception:
         send_message(chat_id, "Я поняла, что нужно найти, но поиск сейчас недоступен. Попробуй ещё раз чуть позже.", menu_keyboard())
         return
-    items = data.get("items") or []
+
+    items = data.get("confirmed") or data.get("items") or []
     if not items:
         send_message(chat_id, "Пока не нашла подходящих вариантов. Можем изменить бюджет, размер или сам товар.", menu_keyboard())
         return
+
+    _last_results[chat_id] = [dict(item) for item in items[:8]]
     _remember(chat_id, "assistant", f"Нашла варианты по запросу: {query}")
-    send_message(chat_id, f"Нашла {len(items)} вариантов. Сначала показываю самые интересные 👇")
-    for index, item in enumerate(items[:8], 1):
+    send_message(chat_id, f"Нашла {len(_last_results[chat_id])} проверенных вариантов. Сначала показываю лучшие 👇")
+
+    for index, item in enumerate(_last_results[chat_id], 1):
         title = str(item.get("title") or "Товар")
         price = item.get("price", item.get("lowest_price"))
         source = item.get("source") or item.get("marketplace") or "магазин"
         url = item.get("url") or item.get("product_url")
-        price_text = f"{float(price):,.0f} ₽".replace(",", " ") if isinstance(price, (int, float)) else "цена уточняется"
-        text = f"{index}. {title}\n💰 {price_text}\n🏪 {source}"
+        text = f"{index}. {title}\n💰 {_format_price(price)}\n🏪 {source}"
+        if item.get("old_price") and isinstance(item.get("old_price"), (int, float)):
+            text += f"\n🏷 Было: {_format_price(item['old_price'])}"
+        if item.get("offer_count"):
+            text += f"\n📊 Предложений: {item['offer_count']}"
         if url:
-            text += f"\n🛒 {url}"
-        send_message(chat_id, text)
+            text += "\n"
+        send_message(chat_id, text, deal_keyboard(item, index - 1))
+
+
+def _rerun_deal_action(chat_id: int, index: int, mode: str) -> None:
+    results = _last_results.get(chat_id, [])
+    if index < 0 or index >= len(results):
+        send_message(chat_id, "Этот результат уже устарел. Давай сделаем новый поиск.", menu_keyboard())
+        return
+    item = results[index]
+    title = str(item.get("title") or "товар")
+    if mode == "cheaper":
+        query = f"найди дешевле: {title}"
+        send_message(chat_id, "💰 Ищу это же или максимально похожее предложение дешевле…")
+    else:
+        query = title
+        send_message(chat_id, "🔄 Проверяю актуальные предложения и цену…")
+    _search(chat_id, query)
+
+
+def _handle_callback(chat_id: int, data: str) -> None:
+    if data == "search":
+        send_message(chat_id, "🔎 Напиши обычными словами, что нужно найти.")
+    elif data == "photo":
+        send_message(chat_id, "📸 Пришли фото товара, и я попробую найти его или похожие варианты.")
+    elif data == "chat":
+        send_message(chat_id, "💬 Конечно. Просто пиши мне как обычному собеседнику — без команд.")
+    elif data == "help":
+        send_message(chat_id, "ℹ️ Можно писать обычным языком, присылать фото и уточнять поиск прямо в диалоге.", menu_keyboard())
+    elif data.startswith("cheaper:"):
+        _rerun_deal_action(chat_id, int(data.split(":", 1)[1]), "cheaper")
+    elif data.startswith("refresh:"):
+        _rerun_deal_action(chat_id, int(data.split(":", 1)[1]), "refresh")
+    elif data.startswith("watch:"):
+        index = int(data.split(":", 1)[1])
+        results = _last_results.get(chat_id, [])
+        if 0 <= index < len(results):
+            item = results[index]
+            key = str(item.get("url") or item.get("product_id") or item.get("title") or index)
+            _watchlist[chat_id].add(key)
+            send_message(chat_id, "🔔 Готово. Добавила товар в список отслеживания. Следующий этап — постоянное хранение и уведомления о снижении цены.")
+        else:
+            send_message(chat_id, "Этот результат уже устарел. Сделай новый поиск.")
+    else:
+        send_message(chat_id, "Не поняла действие. Давай сделаем новый поиск.", menu_keyboard())
 
 
 def _looks_like_search(text: str) -> bool:
@@ -91,7 +162,7 @@ def handle_text(chat_id: int, text: str) -> None:
         return
     _remember(chat_id, "user", text)
     if text == "/start":
-        send_message(chat_id, "Привет! 👋 Я помощник «Мама, дешевле!». Можешь просто разговаривать со мной обычными словами. Я помогу разобраться, а когда понадобится — сама поищу лучшие цены в интернете.", menu_keyboard())
+        send_message(chat_id, "Привет! 👋 Я помощник «Мама, дешевле!». Можешь разговаривать со мной обычными словами, присылать фото и просить найти лучшую цену.", menu_keyboard())
         return
     if text == "/help":
         send_message(chat_id, "Просто пиши мне как человеку. Например: «Нужны кроссовки сыну 5 лет до 3000 рублей». Можно продолжать разговор и уточнять запрос.", menu_keyboard())
@@ -146,11 +217,11 @@ def run_once(offset: int | None = None) -> int | None:
             chat_id = chat.get("id")
             _api("answerCallbackQuery", {"callback_query_id": callback["id"]})
             if chat_id:
-                data = callback.get("data")
-                if data == "search": send_message(chat_id, "🔎 Напиши обычными словами, что нужно найти.")
-                elif data == "photo": send_message(chat_id, "📸 Пришли фото товара, и я попробую найти его или похожие варианты.")
-                elif data == "chat": send_message(chat_id, "💬 Конечно. Просто пиши мне как обычному собеседнику — без команд.")
-                else: send_message(chat_id, "ℹ️ Просто расскажи, что тебе нужно. Я помогу разобраться.", menu_keyboard())
+                try:
+                    _handle_callback(int(chat_id), str(callback.get("data") or ""))
+                except Exception as exc:
+                    print(f"Telegram callback error: {exc}", flush=True)
+                    send_message(int(chat_id), "Не удалось выполнить действие. Попробуй ещё раз.", menu_keyboard())
             continue
         message = update.get("message", {})
         chat_id = message.get("chat", {}).get("id")
