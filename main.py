@@ -7,8 +7,10 @@ from resilient_provider_engine import search_sources
 from providers import PROVIDERS
 from source_registry import source_status
 from source_discovery import discover_sources
+from catalog_store import init_db, search_catalog, stats as catalog_stats, upsert_products
 
-app = FastAPI(title="Marketplace Parser Feed Engine", version="0.13.0")
+app = FastAPI(title="Marketplace Parser Feed Engine", version="0.14.0")
+init_db()
 
 @app.get("/")
 def root():
@@ -20,7 +22,7 @@ def health():
 
 @app.get("/api/sources")
 def sources():
-    return {"sources": list(PROVIDERS), "registry": source_status(), "mode": "independent-public-adapters", "feed_env": {"wildberries_feed": "WB_FEED_URL", "ozon_feed": "OZON_FEED_URL", "yandex_market_feed": "YANDEX_MARKET_FEED_URL", "simaland_feed": "SIMALAND_FEED_URL", "detmir_feed": "DETMIR_FEED_URL", "akusherstvo_feed": "AKUSHERSTVO_FEED_URL", "korablik_feed": "KORABLIK_FEED_URL"}}
+    return {"sources": list(PROVIDERS), "registry": source_status(), "mode": "independent-public-adapters"}
 
 @app.get("/api/discovery")
 def discovery():
@@ -34,7 +36,20 @@ def feed_adapters():
 @app.get("/api/feed-import")
 def feed_import(limit: int = Query(default=5000, ge=1, le=50000)):
     from feed_import_engine import import_all
-    return import_all(limit=limit)
+    result = import_all(limit=limit)
+    stored = upsert_products(result.get("items", []))
+    result["stored"] = stored
+    result["catalog"] = catalog_stats()
+    return result
+
+@app.get("/api/catalog")
+def catalog(q: str = Query(min_length=1, max_length=300), limit: int = Query(default=50, ge=1, le=500), max_price: float | None = Query(default=None, ge=0)):
+    items = search_catalog(q.strip(), limit, max_price)
+    return {"query": q.strip(), "count": len(items), "items": items, "source": "local-catalog"}
+
+@app.get("/api/catalog/stats")
+def catalog_statistics():
+    return catalog_stats()
 
 @app.get("/api/source-health")
 def source_health():
@@ -82,29 +97,17 @@ def agent_search(q: str = Query(min_length=1, max_length=500), limit: int = Quer
     collected: list[dict] = []
     for run in runs:
         collected.extend(run.get("items", []))
-
     max_price = plan.get("max_price")
     if isinstance(max_price, (int, float)):
         collected = [x for x in collected if isinstance(x.get("price"), (int, float)) and x["price"] <= max_price]
 
+    # Local catalog is the fast fallback/cache and is searched regardless of remote source health.
+    collected.extend(search_catalog(query_text, max(20, limit * 3), max_price if isinstance(max_price, (int, float)) else None))
     ranked = rank_items(collected, plan, max(1, limit * 3))
     groups = group_products(ranked, threshold=float(os.getenv("PRODUCT_MATCH_THRESHOLD", "0.72")))
     items = [group["best_offer"] | {"offer_count": group["offer_count"], "lowest_price": group["lowest_price"], "match_group": group["match_group"]} for group in groups[:limit]]
 
-    return {
-        "query": query_text,
-        "count": len(items),
-        "items": items,
-        "product_groups": groups[:limit],
-        "queries": queries,
-        "ai_plan": plan,
-        "requested_sources": requested,
-        "resolved_sources": sources,
-        "agent": "multi-agent-router",
-        "parallel": {"queries": len(queries), "sources_per_query": len(sources)},
-        "runs": [{"query": r.get("query"), "count": r.get("count"), "sources": r.get("sources", []), "error": r.get("error")} for r in runs],
-        "ready": bool(items),
-    }
+    return {"query": query_text, "count": len(items), "items": items, "product_groups": groups[:limit], "queries": queries, "ai_plan": plan, "requested_sources": requested, "resolved_sources": sources, "agent": "multi-agent-router", "parallel": {"queries": len(queries), "sources_per_query": len(sources)}, "runs": [{"query": r.get("query"), "count": r.get("count"), "sources": r.get("sources", []), "error": r.get("error")} for r in runs], "ready": bool(items)}
 
 @app.get("/api/search")
 def search(q: str = Query(min_length=1, max_length=300), limit: int = Query(default=20, ge=1, le=100), source: str | None = Query(default=None)):
