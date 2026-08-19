@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+import os
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
 
 
@@ -21,7 +22,7 @@ class SourceHealth:
 
 
 class SourceHealthRegistry:
-    """Runtime circuit breaker for unreliable public marketplace endpoints."""
+    """Process-local circuit breaker for unreliable public marketplace endpoints."""
 
     def __init__(self, base_cooldown_s: float = 60.0, max_cooldown_s: float = 1800.0):
         self.base = max(1.0, base_cooldown_s)
@@ -42,10 +43,11 @@ class SourceHealthRegistry:
             state.successes += 1
             state.cooldown_until = 0.0
             return
+        if status in {"disabled", "not_configured", "html_only"}:
+            return
         state.failures += 1
         if status == "blocked":
             state.blocked += 1
-            # Exponential cooldown prevents hammering a source that is returning 429/403.
             exponent = min(state.blocked - 1, 5)
             cooldown = min(self.base * (2**exponent), self.maximum)
             state.cooldown_until = time.monotonic() + cooldown
@@ -65,3 +67,13 @@ class SourceHealthRegistry:
             }
             for state in self._states.values()
         ]
+
+
+HEALTH = SourceHealthRegistry(
+    base_cooldown_s=float(os.getenv("SOURCE_COOLDOWN_BASE", "60")),
+    max_cooldown_s=float(os.getenv("SOURCE_COOLDOWN_MAX", "1800")),
+)
+
+
+def source_health_snapshot() -> list[dict[str, Any]]:
+    return HEALTH.snapshot()
