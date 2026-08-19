@@ -8,6 +8,7 @@ import requests
 
 from admin_metrics import snapshot
 from admin_sources import format_text
+from admin_watchlist import items as watchlist_items, remove as remove_watchlist_item
 
 TELEGRAM_API = "https://api.telegram.org/bot{token}/{method}"
 BOT_TOKEN = os.getenv("ADMIN_BOT_TOKEN", "").strip()
@@ -16,6 +17,7 @@ DB_PATH = os.getenv("WATCHLIST_DB_PATH") or os.getenv("ADMIN_DB_PATH") or "/app/
 PARSER_BASE_URL = os.getenv("PARSER_PUBLIC_URL", "http://marketplace-parser:8010").rstrip("/")
 TIMEOUT = max(5.0, float(os.getenv("ADMIN_BOT_TIMEOUT", "15")))
 _pending_broadcast: set[int] = set()
+_pending_delete: dict[int, int] = {}
 
 
 def enabled() -> bool:
@@ -44,6 +46,29 @@ def menu_keyboard() -> dict[str, Any]:
     ]}
 
 
+def watchlist_keyboard(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    keyboard = []
+    for row in rows:
+        title = str(row.get("title") or "Товар")[:28]
+        keyboard.append([{"text": f"🔎 {title}", "callback_data": f"wi:{row['id']}"}])
+    keyboard.append([{"text": "↩️ В меню", "callback_data": "menu"}])
+    return {"inline_keyboard": keyboard}
+
+
+def watch_item_keyboard(item_id: int) -> dict[str, Any]:
+    return {"inline_keyboard": [
+        [{"text": "🗑 Удалить", "callback_data": f"wd:{item_id}"}],
+        [{"text": "↩️ Назад", "callback_data": "watchlist"}],
+    ]}
+
+
+def delete_confirm_keyboard(item_id: int) -> dict[str, Any]:
+    return {"inline_keyboard": [[
+        {"text": "✅ Да, удалить", "callback_data": f"wc:{item_id}"},
+        {"text": "❌ Отмена", "callback_data": f"wi:{item_id}"},
+    ]]}
+
+
 def send_message(chat_id: int, text: str, reply_markup: dict[str, Any] | None = None) -> None:
     payload: dict[str, Any] = {"chat_id": chat_id, "text": text}
     if reply_markup:
@@ -64,23 +89,12 @@ def _table_exists(conn: sqlite3.Connection, name: str) -> bool:
     return row is not None
 
 
-def _watchlist_rows(limit: int = 10) -> list[tuple[Any, ...]]:
-    try:
-        with sqlite3.connect(DB_PATH) as conn:
-            if not _table_exists(conn, "watchlist"):
-                return []
-            return conn.execute("SELECT chat_id,title,last_price,source FROM watchlist ORDER BY updated_at DESC LIMIT ?", (limit,)).fetchall()
-    except sqlite3.Error:
-        return []
-
-
 def _user_ids() -> list[int]:
     try:
         with sqlite3.connect(DB_PATH) as conn:
             if not _table_exists(conn, "watchlist"):
                 return []
-            rows = conn.execute("SELECT DISTINCT chat_id FROM watchlist ORDER BY chat_id").fetchall()
-            return [int(row[0]) for row in rows]
+            return [int(row[0]) for row in conn.execute("SELECT DISTINCT chat_id FROM watchlist ORDER BY chat_id").fetchall()]
     except sqlite3.Error:
         return []
 
@@ -102,15 +116,33 @@ def users_text() -> str:
     return f"👥 Пользователи с Watchlist: {len(users)}\n\n{preview}{suffix}"
 
 
-def watchlist_text() -> str:
-    rows = _watchlist_rows()
+def watchlist_text() -> tuple[str, dict[str, Any]]:
+    rows = watchlist_items(20)
     if not rows:
-        return "🔔 Watchlist\n\nПока нет товаров."
-    lines = ["🔔 Последние товары Watchlist", ""]
-    for chat_id, title, price, source in rows:
+        return "🔔 Watchlist\n\nПока нет товаров.", menu_keyboard()
+    lines = ["🔔 Watchlist\n", "Выбери товар для управления:"]
+    for row in rows:
+        price = row.get("last_price")
         price_text = f"{float(price):,.0f} ₽".replace(",", " ") if price is not None else "цена не указана"
-        lines.append(f"• {title}\n  👤 {chat_id} · 💰 {price_text} · {source or 'источник неизвестен'}")
-    return "\n".join(lines)
+        lines.append(f"• {str(row.get('title') or 'Без названия')[:60]} — {price_text}")
+    return "\n".join(lines), watchlist_keyboard(rows)
+
+
+def _watch_item(item_id: int) -> tuple[str, dict[str, Any]]:
+    rows = [row for row in watchlist_items(100) if int(row["id"]) == item_id]
+    if not rows:
+        return "❌ Товар не найден или уже удалён.", menu_keyboard()
+    row = rows[0]
+    price = row.get("last_price")
+    price_text = f"{float(price):,.0f} ₽".replace(",", " ") if price is not None else "не указана"
+    text = ("🔔 Товар Watchlist\n\n"
+            f"📦 {row.get('title') or 'Без названия'}\n"
+            f"👤 Пользователь: {row.get('chat_id')}\n"
+            f"💰 Цена: {price_text}\n"
+            f"📦 Источник: {row.get('source') or 'не указан'}\n"
+            f"🕐 Обновлено: {row.get('updated_at') or 'неизвестно'}\n"
+            f"🔗 {row.get('url') or 'ссылка отсутствует'}")
+    return text, watch_item_keyboard(item_id)
 
 
 def sources_text() -> str:
@@ -147,10 +179,9 @@ def _show_menu(chat_id: int) -> None:
     send_message(chat_id, "🔐 Панель администратора\n\nВыбери нужный раздел:", menu_keyboard())
 
 
-def _broadcast(chat_id: int, text: str) -> str:
+def _broadcast(text: str) -> str:
     user_ids = [user_id for user_id in _user_ids() if user_id not in ADMIN_USER_IDS]
-    sent = 0
-    failed = 0
+    sent = failed = 0
     for user_id in user_ids:
         try:
             send_message(user_id, f"📢 Сообщение от «Мама, тут дешевле!»\n\n{text}")
@@ -170,7 +201,33 @@ def _handle_callback(chat_id: int, user_id: int, data: str) -> None:
     elif data == "users":
         send_message(chat_id, users_text(), menu_keyboard())
     elif data == "watchlist":
-        send_message(chat_id, watchlist_text(), menu_keyboard())
+        text, keyboard = watchlist_text()
+        send_message(chat_id, text, keyboard)
+    elif data.startswith("wi:"):
+        try:
+            item_id = int(data.split(":", 1)[1])
+            text, keyboard = _watch_item(item_id)
+            send_message(chat_id, text, keyboard)
+        except ValueError:
+            send_message(chat_id, "❌ Некорректный ID товара.", menu_keyboard())
+    elif data.startswith("wd:"):
+        try:
+            item_id = int(data.split(":", 1)[1])
+            _pending_delete[user_id] = item_id
+            send_message(chat_id, "⚠️ Точно удалить этот товар из Watchlist?", delete_confirm_keyboard(item_id))
+        except ValueError:
+            send_message(chat_id, "❌ Некорректный ID товара.", menu_keyboard())
+    elif data.startswith("wc:"):
+        try:
+            item_id = int(data.split(":", 1)[1])
+            if _pending_delete.get(user_id) != item_id:
+                send_message(chat_id, "❌ Подтверждение устарело.", menu_keyboard())
+                return
+            _pending_delete.pop(user_id, None)
+            result = remove_watchlist_item(item_id)
+            send_message(chat_id, "🗑 Товар удалён." if result else "❌ Товар уже отсутствует.", menu_keyboard())
+        except ValueError:
+            send_message(chat_id, "❌ Некорректный ID товара.", menu_keyboard())
     elif data == "search":
         send_message(chat_id, _search_check(), menu_keyboard())
     elif data == "sources":
@@ -188,11 +245,12 @@ def handle_text(chat_id: int, user_id: int, text: str) -> None:
     command = text.strip().lower()
     if command == "/cancel":
         _pending_broadcast.discard(user_id)
+        _pending_delete.pop(user_id, None)
         send_message(chat_id, "Отменено.", menu_keyboard())
         return
     if user_id in _pending_broadcast and not command.startswith("/"):
         _pending_broadcast.discard(user_id)
-        send_message(chat_id, _broadcast(chat_id, text), menu_keyboard())
+        send_message(chat_id, _broadcast(text), menu_keyboard())
         return
     if command in {"/start", "/admin", "/menu"}:
         _show_menu(chat_id)
@@ -203,7 +261,8 @@ def handle_text(chat_id: int, user_id: int, text: str) -> None:
     elif command == "/users":
         send_message(chat_id, users_text(), menu_keyboard())
     elif command == "/watchlist":
-        send_message(chat_id, watchlist_text(), menu_keyboard())
+        text_out, keyboard = watchlist_text()
+        send_message(chat_id, text_out, keyboard)
     elif command == "/search":
         send_message(chat_id, _search_check(), menu_keyboard())
     elif command == "/sources":
