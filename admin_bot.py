@@ -2,12 +2,12 @@ from __future__ import annotations
 
 import os
 import sqlite3
-import time
 from typing import Any
 
 import requests
 
 from admin_metrics import snapshot
+from admin_sources import format_text
 
 TELEGRAM_API = "https://api.telegram.org/bot{token}/{method}"
 BOT_TOKEN = os.getenv("ADMIN_BOT_TOKEN", "").strip()
@@ -54,11 +54,7 @@ def send_message(chat_id: int, text: str, reply_markup: dict[str, Any] | None = 
 def _db_stats() -> dict[str, int]:
     try:
         stats = snapshot()
-        return {
-            "users_with_watchlist": stats["users"],
-            "watchlist": stats["watchlist"],
-            "notifications": stats["notifications"],
-        }
+        return {"users_with_watchlist": stats["users"], "watchlist": stats["watchlist"], "notifications": stats["notifications"]}
     except (sqlite3.Error, OSError):
         return {"users_with_watchlist": 0, "watchlist": 0, "notifications": 0}
 
@@ -118,10 +114,7 @@ def watchlist_text() -> str:
 
 
 def sources_text() -> str:
-    return ("📦 Источники\n\n"
-            "🟢 Parser API — доступен через health-check\n"
-            f"🔗 {PARSER_BASE_URL}\n\n"
-            "Следующим этапом подключаем детальную статистику по Ozon, WB, Яндекс Маркет и Sima-Land.")
+    return format_text()
 
 
 def health_text() -> str:
