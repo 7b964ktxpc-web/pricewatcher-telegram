@@ -8,6 +8,7 @@ import requests
 
 from admin_metrics import snapshot
 from admin_sources import format_text
+from admin_users import users as list_users, user_items
 from admin_watchlist import items as watchlist_items, remove as remove_watchlist_item, verify as verify_watchlist_item
 from watchlist_store import price_history
 
@@ -45,6 +46,24 @@ def menu_keyboard() -> dict[str, Any]:
         [{"text": "🔎 Поиск", "callback_data": "search"}, {"text": "📦 Источники", "callback_data": "sources"}],
         [{"text": "📢 Рассылка", "callback_data": "broadcast"}, {"text": "🔄 Обновить", "callback_data": "menu"}],
     ]}
+
+
+def users_keyboard(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    keyboard = []
+    for row in rows:
+        keyboard.append([{"text": f"👤 {row['chat_id']} · {row['watchlist_count']} товаров", "callback_data": f"u:{row['chat_id']}"}])
+    keyboard.append([{"text": "↩️ В меню", "callback_data": "menu"}])
+    return {"inline_keyboard": keyboard}
+
+
+def user_keyboard(chat_id: int) -> dict[str, Any]:
+    return {"inline_keyboard": [[{"text": "🔔 Товары пользователя", "callback_data": f"ui:{chat_id}"}], [{"text": "↩️ Назад", "callback_data": "users"}]]}
+
+
+def user_items_keyboard(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    keyboard = [[{"text": f"📦 {str(row.get('title') or 'Товар')[:30]}", "callback_data": f"wi:{row['id']}"}] for row in rows]
+    keyboard.append([{"text": "↩️ Пользователь", "callback_data": "users"}])
+    return {"inline_keyboard": keyboard}
 
 
 def watchlist_keyboard(rows: list[dict[str, Any]]) -> dict[str, Any]:
@@ -92,13 +111,7 @@ def _table_exists(conn: sqlite3.Connection, name: str) -> bool:
 
 
 def _user_ids() -> list[int]:
-    try:
-        with sqlite3.connect(DB_PATH) as conn:
-            if not _table_exists(conn, "watchlist"):
-                return []
-            return [int(row[0]) for row in conn.execute("SELECT DISTINCT chat_id FROM watchlist ORDER BY chat_id").fetchall()]
-    except sqlite3.Error:
-        return []
+    return [int(row["chat_id"]) for row in list_users(100)]
 
 
 def stats_text() -> str:
@@ -109,13 +122,34 @@ def stats_text() -> str:
             f"📉 Price-drop событий: {stats['notifications']}")
 
 
-def users_text() -> str:
-    users = _user_ids()
-    if not users:
-        return "👥 Пользователи\n\nПользователей с Watchlist пока нет."
-    preview = "\n".join(f"• `{user_id}`" for user_id in users[:20])
-    suffix = f"\n\nИ ещё: {len(users) - 20}" if len(users) > 20 else ""
-    return f"👥 Пользователи с Watchlist: {len(users)}\n\n{preview}{suffix}"
+def users_text() -> tuple[str, dict[str, Any]]:
+    rows = list_users(50)
+    if not rows:
+        return "👥 Пользователи\n\nПользователей с Watchlist пока нет.", menu_keyboard()
+    text = "👥 Пользователи\n\nВыбери пользователя:\n" + "\n".join(f"• {r['chat_id']} — {r['watchlist_count']} товаров" for r in rows)
+    return text, users_keyboard(rows)
+
+
+def _user_text(chat_id: int) -> tuple[str, dict[str, Any]]:
+    rows = user_items(chat_id, 50)
+    if not rows:
+        return f"👤 Пользователь {chat_id}\n\nWatchlist пуст.", menu_keyboard()
+    text = (f"👤 Пользователь\n\nTelegram ID: {chat_id}\n"
+            f"🔔 Товаров: {len(rows)}\n\n"
+            "Выбери действие:")
+    return text, user_keyboard(chat_id)
+
+
+def _user_items_text(chat_id: int) -> tuple[str, dict[str, Any]]:
+    rows = user_items(chat_id, 50)
+    if not rows:
+        return f"🔔 Watchlist пользователя {chat_id}\n\nПусто.", user_keyboard(chat_id)
+    lines = [f"🔔 Watchlist пользователя {chat_id}", ""]
+    for row in rows:
+        price = row.get("last_price")
+        price_text = f"{float(price):,.0f} ₽".replace(",", " ") if price is not None else "цена не указана"
+        lines.append(f"• {str(row.get('title') or 'Без названия')[:60]} — {price_text}")
+    return "\n".join(lines), user_items_keyboard(rows)
 
 
 def watchlist_text() -> tuple[str, dict[str, Any]]:
@@ -173,21 +207,10 @@ def _watch_verify_text(item_id: int) -> str:
     item = result["item"]
     old_price = item.get("last_price")
     new_price = verification.get("price")
-    if verification.get("verified"):
-        status = "🟢 Подтверждена"
-    elif verification.get("verification_status") == "needs_review":
-        status = "🟡 Требует проверки"
-    else:
-        status = "🔴 Не подтверждена"
+    status = "🟢 Подтверждена" if verification.get("verified") else ("🟡 Требует проверки" if verification.get("verification_status") == "needs_review" else "🔴 Не подтверждена")
     old_text = f"{float(old_price):,.0f} ₽".replace(",", " ") if old_price is not None else "нет"
     new_text = f"{float(new_price):,.0f} ₽".replace(",", " ") if new_price is not None else "не найдена"
-    return ("🔄 Проверка цены\n\n"
-            f"📦 {item.get('title') or 'Без названия'}\n"
-            f"💰 Было: {old_text}\n"
-            f"💰 Сейчас: {new_text}\n"
-            f"🔎 Статус: {status}\n"
-            f"🧪 Метод: {verification.get('verification_method', 'unknown')}\n"
-            f"🔗 {verification.get('final_url') or item.get('url')}")
+    return ("🔄 Проверка цены\n\n" f"📦 {item.get('title') or 'Без названия'}\n" f"💰 Было: {old_text}\n" f"💰 Сейчас: {new_text}\n" f"🔎 Статус: {status}\n" f"🧪 Метод: {verification.get('verification_method', 'unknown')}\n" f"🔗 {verification.get('final_url') or item.get('url')}")
 
 
 def sources_text() -> str:
@@ -244,7 +267,22 @@ def _handle_callback(chat_id: int, user_id: int, data: str) -> None:
     elif data == "health":
         send_message(chat_id, health_text(), menu_keyboard())
     elif data == "users":
-        send_message(chat_id, users_text(), menu_keyboard())
+        text, keyboard = users_text()
+        send_message(chat_id, text, keyboard)
+    elif data.startswith("u:"):
+        try:
+            chat = int(data.split(":", 1)[1])
+            text, keyboard = _user_text(chat)
+            send_message(chat_id, text, keyboard)
+        except ValueError:
+            send_message(chat_id, "❌ Некорректный Telegram ID.", menu_keyboard())
+    elif data.startswith("ui:"):
+        try:
+            chat = int(data.split(":", 1)[1])
+            text, keyboard = _user_items_text(chat)
+            send_message(chat_id, text, keyboard)
+        except ValueError:
+            send_message(chat_id, "❌ Некорректный Telegram ID.", menu_keyboard())
     elif data == "watchlist":
         text, keyboard = watchlist_text()
         send_message(chat_id, text, keyboard)
@@ -310,7 +348,8 @@ def handle_text(chat_id: int, user_id: int, text: str) -> None:
     elif command in {"/health", "/system"}:
         send_message(chat_id, health_text(), menu_keyboard())
     elif command == "/users":
-        send_message(chat_id, users_text(), menu_keyboard())
+        text_out, keyboard = users_text()
+        send_message(chat_id, text_out, keyboard)
     elif command == "/watchlist":
         text_out, keyboard = watchlist_text()
         send_message(chat_id, text_out, keyboard)
