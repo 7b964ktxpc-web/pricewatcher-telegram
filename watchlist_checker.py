@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import os
 import re
 import time
@@ -14,6 +15,11 @@ from watchlist_store import list_all, update_price
 PARSER_BASE_URL = os.getenv("PARSER_PUBLIC_URL", "http://127.0.0.1:8010").rstrip("/")
 CHECK_INTERVAL = max(60, int(os.getenv("WATCHLIST_CHECK_INTERVAL", "1800")))
 TIMEOUT = max(5.0, float(os.getenv("WATCHLIST_CHECK_TIMEOUT", "20")))
+NOTIFICATION_COOLDOWN = max(0, int(os.getenv("WATCHLIST_NOTIFICATION_COOLDOWN", "21600")))
+
+# In-process notification state. The persisted last_price remains the source of truth
+# for price tracking; this cache only prevents duplicate alerts during a checker lifetime.
+_notified_events: dict[str, tuple[float, float]] = {}
 
 
 def _price(item: dict[str, Any]) -> float | None:
@@ -63,8 +69,6 @@ def _title_matches(watched_title: Any, offer_title: Any) -> bool:
 
 def _best_price(item: dict[str, Any], offers: list[dict[str, Any]]) -> float | None:
     watched_url = _url(item.get("url") or item.get("product_url"))
-
-    # Prefer the exact watched URL. This is the safest comparison for a saved item.
     exact_prices: list[float] = []
     if watched_url:
         for offer in offers:
@@ -76,9 +80,6 @@ def _best_price(item: dict[str, Any], offers: list[dict[str, Any]]) -> float | N
         if exact_prices:
             return min(exact_prices)
 
-    # If the saved item has no stable URL, only compare semantically matching
-    # titles. Never fall back to the cheapest unrelated search result: that can
-    # produce false price-drop alerts for a completely different product.
     matched_prices = [
         price
         for offer in offers
@@ -108,6 +109,24 @@ def _search(item: dict[str, Any]) -> list[dict[str, Any]]:
     return []
 
 
+def _event_key(item: dict[str, Any], new_price: float) -> str:
+    identity = item.get("url") or item.get("product_url") or item.get("item_key") or item.get("title")
+    raw = f"{item.get('chat_id')}|{identity}|{new_price:.2f}"
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+def _should_notify(item: dict[str, Any], old_price: float, new_price: float) -> bool:
+    key = _event_key(item, new_price)
+    now = time.time()
+    previous = _notified_events.get(key)
+    if previous is not None:
+        notified_at, _ = previous
+        if NOTIFICATION_COOLDOWN == 0 or now - notified_at < NOTIFICATION_COOLDOWN:
+            return False
+    _notified_events[key] = (now, new_price)
+    return True
+
+
 def check_once() -> int:
     checked = 0
     for item in list_all():
@@ -119,7 +138,7 @@ def check_once() -> int:
             old_price = _price({"price": item.get("last_price")})
             update_price(int(item["chat_id"]), str(item["item_key"]), new_price)
             checked += 1
-            if old_price is not None and new_price < old_price:
+            if old_price is not None and new_price < old_price and _should_notify(item, old_price, new_price):
                 drop = old_price - new_price
                 percent = drop / old_price * 100 if old_price else 0
                 send_message(
