@@ -9,6 +9,7 @@ import requests
 from admin_metrics import snapshot
 from admin_sources import format_text
 from admin_watchlist import items as watchlist_items, remove as remove_watchlist_item, verify as verify_watchlist_item
+from watchlist_store import price_history
 
 TELEGRAM_API = "https://api.telegram.org/bot{token}/{method}"
 BOT_TOKEN = os.getenv("ADMIN_BOT_TOKEN", "").strip()
@@ -129,6 +130,20 @@ def watchlist_text() -> tuple[str, dict[str, Any]]:
     return "\n".join(lines), watchlist_keyboard(rows)
 
 
+def _format_history(history: list[dict[str, Any]]) -> str:
+    if not history:
+        return "📉 История: нет данных"
+    values = [float(row["price"]) for row in reversed(history) if row.get("price") is not None]
+    if not values:
+        return "📉 История: нет данных"
+    chain = " → ".join(f"{value:,.0f} ₽".replace(",", " ") for value in values[-6:])
+    change = ""
+    if len(values) >= 2 and values[-2] != 0:
+        pct = (values[-1] - values[-2]) / values[-2] * 100
+        change = f"\n📊 Изменение: {pct:+.1f}%"
+    return f"📉 История: {chain}{change}"
+
+
 def _watch_item(item_id: int) -> tuple[str, dict[str, Any]]:
     rows = [row for row in watchlist_items(100) if int(row["id"]) == item_id]
     if not rows:
@@ -136,13 +151,17 @@ def _watch_item(item_id: int) -> tuple[str, dict[str, Any]]:
     row = rows[0]
     price = row.get("last_price")
     price_text = f"{float(price):,.0f} ₽".replace(",", " ") if price is not None else "не указана"
+    with sqlite3.connect(DB_PATH) as conn:
+        key_row = conn.execute("SELECT item_key FROM watchlist WHERE rowid=?", (item_id,)).fetchone()
+    history = price_history(int(row["chat_id"]), str(key_row[0]), 10) if key_row else []
     text = ("🔔 Товар Watchlist\n\n"
             f"📦 {row.get('title') or 'Без названия'}\n"
             f"👤 Пользователь: {row.get('chat_id')}\n"
             f"💰 Цена: {price_text}\n"
             f"📦 Источник: {row.get('source') or 'не указан'}\n"
             f"🕐 Обновлено: {row.get('updated_at') or 'неизвестно'}\n"
-            f"🔗 {row.get('url') or 'ссылка отсутствует'}")
+            f"🔗 {row.get('url') or 'ссылка отсутствует'}\n\n"
+            f"{_format_history(history)}")
     return text, watch_item_keyboard(item_id)
 
 
@@ -240,7 +259,7 @@ def _handle_callback(chat_id: int, user_id: int, data: str) -> None:
         try:
             item_id = int(data.split(":", 1)[1])
             send_message(chat_id, _watch_verify_text(item_id), watch_item_keyboard(item_id))
-        except (ValueError, Exception) as exc:
+        except Exception as exc:
             send_message(chat_id, f"❌ Проверка не выполнена: {type(exc).__name__}", menu_keyboard())
     elif data.startswith("wd:"):
         try:
@@ -336,12 +355,3 @@ def run_once(offset: int | None = None) -> int | None:
         if chat_id is not None and user_id is not None and isinstance(text, str):
             handle_text(int(chat_id), int(user_id), text)
     return next_offset
-
-
-def validate_startup() -> None:
-    if not enabled():
-        raise SystemExit("Set ADMIN_BOT_TOKEN and ADMIN_USER_IDS before starting admin bot")
-    result = _api("getMe")
-    bot = result.get("result", {})
-    username = bot.get("username") or bot.get("first_name") or "unknown"
-    print(f"Admin Telegram bot authenticated: @{username}; admins={sorted(ADMIN_USER_IDS)}", flush=True)
