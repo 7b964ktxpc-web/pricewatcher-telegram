@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from source_search import source_queries
+from web_fallback import fallback_search
 from web_product_extractor import extract_product_page
 from web_research_engine import research
 
@@ -22,7 +23,6 @@ def _normalise_page(page: dict[str, Any], query: str) -> dict[str, Any]:
 def search_web(query: str, limit: int = 8) -> dict[str, Any]:
     targeted = source_queries([query, f"{query} купить цена", f"{query} скидка акция"])
     targeted_queries = [item["query"] for item in targeted]
-    # Keep the generic searches as a fallback for ordinary children's stores.
     queries = [query, f"{query} купить цена", f"{query} скидка акция", *targeted_queries]
     unique_queries = list(dict.fromkeys(queries))
 
@@ -32,7 +32,6 @@ def search_web(query: str, limit: int = 8) -> dict[str, Any]:
     pages: list[dict[str, Any]] = []
     engines: set[str] = set()
 
-    # Limit per-query results so one source cannot consume the complete budget.
     for search_query in unique_queries:
         result = research(search_query, limit=max(2, min(4, limit)), fetch_pages=True)
         engines.update(result.get("engines", []))
@@ -44,8 +43,22 @@ def search_web(query: str, limit: int = 8) -> dict[str, Any]:
                 offers.extend(extracted[:3])
                 extracted_pages.append({"url": page.get("final_url") or page.get("url"), "count": len(extracted), "source": page.get("source")})
 
+    # Resilient fallback: a blocked/dynamic marketplace page is a signal to
+    # search for the same product elsewhere, not a reason to discard the query.
+    failed_pages = [p for p in pages if p.get("page_type") in {"blocked", "rate_limited", "auth_required", "dynamic_page", "timeout", "network_error", "empty_page"}]
+    if failed_pages:
+        fallback = fallback_search(query, failed_pages, limit=min(6, limit))
+        engines.update(fallback.get("engines", []))
+        errors.extend(fallback.get("errors", []))
+        for item in fallback.get("items", []):
+            page = {**item, "text": "", "page_type": "fallback_discovery"}
+            extracted = extract_product_page(page, query)
+            if extracted:
+                offers.extend(extracted[:2])
+            else:
+                offers.append(_normalise_page(item, query))
+
     if not offers:
-        # Discovery-only fallback; these entries must not be treated as verified prices.
         discovered = research(query, limit=limit, fetch_pages=False)
         offers = [_normalise_page(item, query) for item in discovered.get("items", [])]
         engines.update(discovered.get("engines", []))
@@ -64,6 +77,8 @@ def search_web(query: str, limit: int = 8) -> dict[str, Any]:
         "extracted_pages": extracted_pages,
         "engines": sorted(engines),
         "errors": errors,
+        "fallback_used": bool(failed_pages),
+        "failed_pages": len(failed_pages),
         "ready": bool(dedup),
     }
 
