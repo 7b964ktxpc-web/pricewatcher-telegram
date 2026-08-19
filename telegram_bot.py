@@ -47,7 +47,7 @@ def menu_keyboard() -> dict[str, Any]:
 
 
 def deal_keyboard(item: dict[str, Any], index: int) -> dict[str, Any]:
-    rows: list[list[dict[str, str]]] = []
+    rows: list[list[dict[str, Any]]] = []
     url = item.get("url") or item.get("product_url")
     if isinstance(url, str) and url.startswith(("http://", "https://")):
         rows.append([{"text": "🛒 Купить", "url": url}])
@@ -88,34 +88,66 @@ def _show_watchlist(chat_id: int) -> None:
         send_message(chat_id, text, {"inline_keyboard": rows})
 
 
+def _extract_search_items(data: dict[str, Any]) -> list[dict[str, Any]]:
+    """Normalize the two supported search endpoint response shapes."""
+    items = data.get("items") or data.get("confirmed") or []
+    if not isinstance(items, list):
+        return []
+    return [dict(item) for item in items if isinstance(item, dict)]
+
+
 def _search(chat_id: int, query: str) -> None:
     try:
         build_plan(query)
     except Exception:
         pass
-    try:
-        response = requests.get(f"{PARSER_BASE_URL}/api/child-search", params={"q": query, "limit": 8}, timeout=TIMEOUT)
-        response.raise_for_status()
-        data = response.json()
-    except Exception:
+
+    # Prefer the full multi-agent endpoint: marketplace adapters + web research
+    # + catalog + matcher + ranking. Keep child-search as a compatibility
+    # fallback so Telegram remains useful if an upstream route is temporarily
+    # unavailable.
+    endpoints = [
+        ("/api/agent/search", {"q": query, "limit": 8}),
+        ("/api/child-search", {"q": query, "limit": 8}),
+    ]
+    data: dict[str, Any] | None = None
+    errors: list[str] = []
+    for path, params in endpoints:
+        try:
+            response = requests.get(f"{PARSER_BASE_URL}{path}", params=params, timeout=TIMEOUT)
+            response.raise_for_status()
+            candidate = response.json()
+            if _extract_search_items(candidate):
+                data = candidate
+                break
+            errors.append(f"{path}: no results")
+        except Exception as exc:
+            errors.append(f"{path}: {exc}")
+
+    if data is None:
+        print(f"Telegram search unavailable: {'; '.join(errors)}", flush=True)
         send_message(chat_id, "Я поняла, что нужно найти, но поиск сейчас недоступен. Попробуй ещё раз чуть позже.", menu_keyboard())
         return
-    items = data.get("confirmed") or data.get("items") or []
+
+    items = _extract_search_items(data)
     if not items:
         send_message(chat_id, "Пока не нашла подходящих вариантов. Можем изменить бюджет, размер или сам товар.", menu_keyboard())
         return
-    _last_results[chat_id] = [dict(item) for item in items[:8]]
+
+    _last_results[chat_id] = items[:8]
     _remember(chat_id, "assistant", f"Нашла варианты по запросу: {query}")
-    send_message(chat_id, f"Нашла {len(_last_results[chat_id])} проверенных вариантов. Сначала показываю лучшие 👇")
+    send_message(chat_id, f"Нашла {len(_last_results[chat_id])} вариантов и сравнила предложения. Сначала показываю лучшие 👇")
     for index, item in enumerate(_last_results[chat_id], 1):
         title = str(item.get("title") or "Товар")
-        price = item.get("price", item.get("lowest_price"))
+        price = item.get("lowest_price", item.get("price"))
         source = item.get("source") or item.get("marketplace") or "магазин"
         text = f"{index}. {title}\n💰 {_format_price(price)}\n🏪 {source}"
         if item.get("old_price") and isinstance(item.get("old_price"), (int, float)):
             text += f"\n🏷 Было: {_format_price(item['old_price'])}"
         if item.get("offer_count"):
             text += f"\n📊 Предложений: {item['offer_count']}"
+        if item.get("match_group"):
+            text += "\n🔎 Сравнение предложений включено"
         send_message(chat_id, text, deal_keyboard(item, index - 1))
 
 
