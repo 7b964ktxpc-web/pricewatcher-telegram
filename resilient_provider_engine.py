@@ -4,6 +4,7 @@ import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any
 
+from feed_adapters import FEED_ADAPTERS
 from provider_engine import search_sources as _search_sources
 from source_health import HEALTH
 
@@ -36,8 +37,15 @@ def _run_source(source: str, query: str, limit: int) -> dict[str, Any]:
 
 
 def search_sources(query: str, limit: int = 20, sources: list[str] | None = None) -> dict[str, Any]:
-    """Search independent sources concurrently so one slow/blocked provider does not serialize the request."""
-    selected = list(dict.fromkeys(sources or ["wildberries", "ozon", "yandex_market", "simaland"]))
+    """Search configured marketplace and feed sources concurrently.
+
+    Feed adapters are part of the normal deterministic search path, not only
+    the import path. This keeps /api/search useful when a permitted catalog
+    feed is configured while preserving the same cooldown/retry/error
+    handling as marketplace providers.
+    """
+    default_sources = ["wildberries", "ozon", "yandex_market", "simaland", *FEED_ADAPTERS]
+    selected = list(dict.fromkeys(sources or default_sources))
     if not selected:
         return {"query": query, "count": 0, "items": [], "sources": [], "ready": False}
 
