@@ -1,4 +1,14 @@
-from providers import PROVIDERS, search_sources
+import pytest
+
+from providers import HEALTH, PROVIDERS, search_sources
+
+
+@pytest.fixture(autouse=True)
+def reset_provider_health():
+    """Keep provider circuit-breaker state isolated between tests."""
+    HEALTH.reset()
+    yield
+    HEALTH.reset()
 
 
 def test_provider_registry():
