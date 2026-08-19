@@ -28,6 +28,9 @@ services:
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
       DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
       DEEPSEEK_MODEL: ${DEEPSEEK_MODEL:-deepseek-chat}
+      HF_TOKEN: ${HF_TOKEN:-}
+      VISION_API_URL: ${VISION_API_URL:-https://router.huggingface.co/hf-inference/models/Qwen/Qwen2.5-VL-7B-Instruct}
+      VISION_TIMEOUT: ${VISION_TIMEOUT:-45}
       PARSER_PUBLIC_URL: http://marketplace-parser:8010
       TELEGRAM_HISTORY_SIZE: "12"
       TELEGRAM_TIMEOUT: "20"
