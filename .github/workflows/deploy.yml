@@ -34,73 +34,37 @@ jobs:
           ssh '${{ secrets.TIMEWEB_USER }}@${{ secrets.TIMEWEB_HOST }}' "set -e
             mkdir -p /opt/marketplace-parser/repo
             cd /opt/marketplace-parser/repo
-
             if [ -d .git ]; then
               git fetch origin main
               git reset --hard origin/main
             else
               git clone --branch main https://github.com/7b964ktxpc-web/pricewatcher-telegram.git .
             fi
-
             : > .env.telegram
-            if [ -n '$TOKEN_B64' ]; then
-              printf 'TELEGRAM_BOT_TOKEN=' >> .env.telegram
-              printf '%s' '$TOKEN_B64' | base64 -d >> .env.telegram
-              printf '\n' >> .env.telegram
-              echo 'Telegram bot secret configured.'
-            else
-              echo 'WARNING: TELEGRAM_BOT_TOKEN secret is not configured; Telegram bot will remain unusable.'
-            fi
-            if [ -n '$DEEPSEEK_B64' ]; then
-              printf 'DEEPSEEK_API_KEY=' >> .env.telegram
-              printf '%s' '$DEEPSEEK_B64' | base64 -d >> .env.telegram
-              printf '\n' >> .env.telegram
-              echo 'DeepSeek fallback configured.'
-            fi
-            if [ -n '$HF_B64' ]; then
-              printf 'HF_TOKEN=' >> .env.telegram
-              printf '%s' '$HF_B64' | base64 -d >> .env.telegram
-              printf '\n' >> .env.telegram
-              echo 'Hugging Face token configured.'
-            else
-              echo 'WARNING: HF_TOKEN secret is not configured; photo search will be unavailable.'
-            fi
-            if [ -n '$GROQ_B64' ]; then
-              printf 'GROQ_API_KEY=' >> .env.telegram
-              printf '%s' '$GROQ_B64' | base64 -d >> .env.telegram
-              printf '\n' >> .env.telegram
-              echo 'Groq configured.'
-            fi
-            if [ -n '$GEMINI_B64' ]; then
-              printf 'GEMINI_API_KEY=' >> .env.telegram
-              printf '%s' '$GEMINI_B64' | base64 -d >> .env.telegram
-              printf '\n' >> .env.telegram
-              echo 'Gemini configured.'
-            fi
+            if [ -n '$TOKEN_B64' ]; then printf 'TELEGRAM_BOT_TOKEN=' >> .env.telegram; printf '%s' '$TOKEN_B64' | base64 -d >> .env.telegram; printf '\n' >> .env.telegram; else echo 'WARNING: TELEGRAM_BOT_TOKEN is not configured.'; fi
+            if [ -n '$DEEPSEEK_B64' ]; then printf 'DEEPSEEK_API_KEY=' >> .env.telegram; printf '%s' '$DEEPSEEK_B64' | base64 -d >> .env.telegram; printf '\n' >> .env.telegram; fi
+            if [ -n '$HF_B64' ]; then printf 'HF_TOKEN=' >> .env.telegram; printf '%s' '$HF_B64' | base64 -d >> .env.telegram; printf '\n' >> .env.telegram; else echo 'WARNING: HF_TOKEN is not configured.'; fi
+            if [ -n '$GROQ_B64' ]; then printf 'GROQ_API_KEY=' >> .env.telegram; printf '%s' '$GROQ_B64' | base64 -d >> .env.telegram; printf '\n' >> .env.telegram; fi
+            if [ -n '$GEMINI_B64' ]; then printf 'GEMINI_API_KEY=' >> .env.telegram; printf '%s' '$GEMINI_B64' | base64 -d >> .env.telegram; printf '\n' >> .env.telegram; fi
             chmod 600 .env.telegram
-
             docker compose --env-file .env.telegram up -d --build --remove-orphans
-
             echo '=== CONTAINERS ==='
             docker compose ps
-            echo '=== TELEGRAM BOT STATE ==='
-            docker compose ps telegram-bot
-
             echo '=== WAITING FOR HEALTH ==='
             for i in \$(seq 1 15); do
               if curl -fsS --max-time 5 http://127.0.0.1:8010/health; then
                 echo
                 echo 'HEALTH OK'
-                if docker compose ps --status running --services | grep -qx telegram-bot; then
+                if docker compose ps --status running --services | grep -qx telegram-bot && docker compose ps --status running --services | grep -qx watchlist-checker; then
                   echo 'TELEGRAM BOT RUNNING'
+                  echo 'WATCHLIST CHECKER RUNNING'
                   exit 0
                 fi
               fi
               echo \"Waiting for application... \$i/15\"
               sleep 2
             done
-
-            echo '=== HEALTHCHECK FAILED ==='
+            echo '=== DEPLOY VERIFICATION FAILED ==='
             docker compose ps
             echo '=== APPLICATION LOGS ==='
             docker compose logs --tail=200
