@@ -31,12 +31,20 @@ jobs:
           ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
 
       - name: Validate deployment configuration
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          ADMIN_BOT_TOKEN: ${{ secrets.ADMIN_BOT_TOKEN }}
+          ADMIN_USER_IDS: ${{ secrets.ADMIN_USER_IDS }}
         run: |
           set -euo pipefail
           test -n "$TIMEWEB_HOST"
           test -n "$TIMEWEB_USER"
           test -n "$TIMEWEB_SSH_KEY"
           test -n "$TIMEWEB_APP_DIR"
+          test -n "$TELEGRAM_BOT_TOKEN"
+          test -n "$ADMIN_BOT_TOKEN"
+          test -n "$ADMIN_USER_IDS"
+          echo "Deployment configuration OK"
 
       - name: Configure SSH
         run: |
@@ -86,9 +94,10 @@ jobs:
           export DETMIR_FEED_B64="$(b64 "$DETMIR_FEED_URL")"
           export AKUSHERSTVO_FEED_B64="$(b64 "$AKUSHERSTVO_FEED_URL")"
           export KORABLIK_FEED_B64="$(b64 "$KORABLIK_FEED_URL")"
+          EXPECTED_SHA="${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}"
 
           ssh -i "$HOME/.ssh/id_ed25519" -o BatchMode=yes "$TIMEWEB_USER@$TIMEWEB_HOST" \
-            "APP_DIR='$TIMEWEB_APP_DIR' TOKEN_B64='$TOKEN_B64' ADMIN_TOKEN_B64='$ADMIN_TOKEN_B64' ADMIN_IDS_B64='$ADMIN_IDS_B64' DEEPSEEK_B64='$DEEPSEEK_B64' HF_B64='$HF_B64' GROQ_B64='$GROQ_B64' GEMINI_B64='$GEMINI_B64' WB_API_B64='$WB_API_B64' YM_API_B64='$YM_API_B64' YM_BUSINESS_B64='$YM_BUSINESS_B64' WB_FEED_B64='$WB_FEED_B64' OZON_FEED_B64='$OZON_FEED_B64' YM_FEED_B64='$YM_FEED_B64' SIMALAND_FEED_B64='$SIMALAND_FEED_B64' DETMIR_FEED_B64='$DETMIR_FEED_B64' AKUSHERSTVO_FEED_B64='$AKUSHERSTVO_FEED_B64' KORABLIK_FEED_B64='$KORABLIK_FEED_B64' bash -se" <<'REMOTE'
+            "APP_DIR='$TIMEWEB_APP_DIR' EXPECTED_SHA='$EXPECTED_SHA' TOKEN_B64='$TOKEN_B64' ADMIN_TOKEN_B64='$ADMIN_TOKEN_B64' ADMIN_IDS_B64='$ADMIN_IDS_B64' DEEPSEEK_B64='$DEEPSEEK_B64' HF_B64='$HF_B64' GROQ_B64='$GROQ_B64' GEMINI_B64='$GEMINI_B64' WB_API_B64='$WB_API_B64' YM_API_B64='$YM_API_B64' YM_BUSINESS_B64='$YM_BUSINESS_B64' WB_FEED_B64='$WB_FEED_B64' OZON_FEED_B64='$OZON_FEED_B64' YM_FEED_B64='$YM_FEED_B64' SIMALAND_FEED_B64='$SIMALAND_FEED_B64' DETMIR_FEED_B64='$DETMIR_FEED_B64' AKUSHERSTVO_FEED_B64='$AKUSHERSTVO_FEED_B64' KORABLIK_FEED_B64='$KORABLIK_FEED_B64' bash -se" <<'REMOTE'
           set -euo pipefail
 
           mkdir -p "$APP_DIR"
@@ -100,6 +109,10 @@ jobs:
           else
             git clone --branch main https://github.com/7b964ktxpc-web/pricewatcher-telegram.git .
           fi
+
+          DEPLOYED_SHA="$(git rev-parse HEAD)"
+          test "$DEPLOYED_SHA" = "$EXPECTED_SHA"
+          echo "DEPLOYED SHA: $DEPLOYED_SHA"
 
           : > .env.telegram
           write_secret() {
@@ -149,6 +162,7 @@ jobs:
           export AKUSHERSTVO_FEED_URL="$(printf '%s' "$AKUSHERSTVO_FEED_B64" | base64 -d)"
           export KORABLIK_FEED_URL="$(printf '%s' "$KORABLIK_FEED_B64" | base64 -d)"
 
+          docker compose --env-file .env.telegram config >/dev/null
           docker compose --env-file .env.telegram up -d --build --remove-orphans
           docker compose ps
 
