@@ -64,7 +64,7 @@ def send_message(chat_id: int, text: str, reply_markup: dict[str, Any] | None = 
 
 
 def menu_keyboard() -> dict[str, Any]:
-    return {"inline_keyboard": [[{"text": "🔎 Найти товар", "callback_data": "search"}, {"text": "📸 По фото", "callback_data": "photo"}], [{"text": "💰 Найти дешевле", "callback_data": "cheaper_menu"}, {"text": "🔔 Мои товары", "callback_data": "watchlist"}], [{"text": "💬 Спросить AI", "callback_data": "chat"}, {"text": "ℹ️ Помощь", "callback_data": "help"}]]}
+    return {"inline_keyboard": [[{"text": "🔎 Найти товар", "callback_data": "search"}, {"text": "📸 По фото", "callback_data": "photo"}], [{"text": "🔎 Найти дешевле", "callback_data": "cheaper_menu"}, {"text": "🔔 Мои товары", "callback_data": "watchlist"}], [{"text": "💬 Спросить AI", "callback_data": "chat"}, {"text": "ℹ️ Помощь", "callback_data": "help"}]]}
 
 
 def back_keyboard() -> dict[str, Any]:
@@ -76,8 +76,8 @@ def deal_keyboard(item: dict[str, Any], index: int) -> dict[str, Any]:
     url = item.get("url") or item.get("product_url")
     if isinstance(url, str) and url.startswith(("http://", "https://")):
         rows.append([{"text": "🛒 Купить", "url": url}])
-    rows.append([{"text": "💰 Найти дешевле", "callback_data": f"cheaper:{index}"}, {"text": "🔄 Проверить", "callback_data": f"refresh:{index}"}])
-    rows.append([{"text": "🔔 Следить за ценой", "callback_data": f"watch:{index}"}])
+    rows.append([{"text": "🔎 Найти дешевле", "callback_data": f"cheaper:{index}"}, {"text": "🔄 Проверить", "callback_data": f"refresh:{index}"}])
+    rows.append([{"text": "🔔 Следить", "callback_data": f"watch:{index}"}])
     return {"inline_keyboard": rows}
 
 
@@ -98,7 +98,7 @@ def _format_price(value: Any) -> str:
 def _show_watchlist(chat_id: int) -> None:
     items = list_for_chat(chat_id)
     if not items:
-        send_message(chat_id, "🔔 <b>Здесь пока пусто</b>\n\nНайди товар и нажми «🔔 Следить за ценой». Я сообщу, когда цена заметно снизится.", menu_keyboard())
+        send_message(chat_id, "🔔 <b>Здесь пока пусто</b>\n\nНайди товар и нажми «🔔 Следить». Я сообщу, когда цена заметно снизится.", menu_keyboard())
         return
     send_message(chat_id, f"🔔 <b>Мои товары</b>\n\nСейчас отслеживаю: <b>{len(items)}</b>")
     for item in items:
@@ -171,7 +171,7 @@ def _rerun_deal_action(chat_id: int, index: int, mode: str) -> None:
         return
     title = str(results[index].get("title") or "товар")
     if mode == "cheaper":
-        send_message(chat_id, "💰 <b>Ищу дешевле…</b>\nСравниваю доступные предложения.")
+        send_message(chat_id, "🔎 <b>Ищу дешевле…</b>\nСравниваю доступные предложения.")
         _search(chat_id, f"найди дешевле: {title}")
     else:
         send_message(chat_id, "🔄 <b>Проверяю цену…</b>\nИщу актуальные предложения.")
@@ -188,7 +188,7 @@ def _handle_callback(chat_id: int, data: str) -> None:
     elif data == "chat":
         send_message(chat_id, "💬 <b>Я слушаю</b>\n\nПиши вопрос обычными словами — помогу уточнить поиск или подобрать варианты.", back_keyboard())
     elif data == "cheaper_menu":
-        send_message(chat_id, "💰 <b>Найти дешевле</b>\n\nНапиши, какой товар хочешь купить, и я попробую найти более выгодные предложения.", back_keyboard())
+        send_message(chat_id, "🔎 <b>Найти дешевле</b>\n\nНапиши, какой товар хочешь купить, и я попробую найти более выгодные предложения.", back_keyboard())
     elif data == "watchlist":
         _show_watchlist(chat_id)
     elif data == "help":
