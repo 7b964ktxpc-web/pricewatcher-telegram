@@ -43,3 +43,28 @@ def find(query: str, limit: int = 20) -> list[dict[str, Any]]:
             (q, limit),
         ).fetchall()
     return [dict(row) for row in rows]
+
+
+def card(chat_id: int) -> str:
+    matches = find(str(chat_id), 1)
+    if not matches:
+        return f"❌ Пользователь {chat_id} не найден."
+    user = matches[0]
+    return (
+        "👤 Пользователь\n\n"
+        f"🆔 Telegram ID: {user['chat_id']}\n"
+        f"🔔 Watchlist: {user['watchlist_count']}\n"
+        f"🕐 Последняя активность: {user['last_activity'] or 'нет данных'}"
+    )
+
+
+def search_text(query: str) -> str:
+    matches = find(query, 20)
+    if not matches:
+        return f"🔎 Пользователь {query.strip() or '—'} не найден."
+    lines = [f"🔎 Результаты поиска: {query.strip()}", ""]
+    for user in matches:
+        lines.append(
+            f"• 🆔 {user['chat_id']} — 🔔 {user['watchlist_count']} — 🕐 {user['last_activity'] or '—'}"
+        )
+    return "\n".join(lines)
