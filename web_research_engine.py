@@ -13,15 +13,9 @@ USER_AGENT = os.getenv("WEB_RESEARCH_USER_AGENT", "Mozilla/5.0 (compatible; Mama
 TIMEOUT = float(os.getenv("WEB_RESEARCH_TIMEOUT", "10"))
 MAX_PAGE_CHARS = int(os.getenv("WEB_RESEARCH_MAX_PAGE_CHARS", "30000"))
 MAX_RAW_HTML_CHARS = int(os.getenv("WEB_RESEARCH_MAX_RAW_HTML_CHARS", "60000"))
-SEARCH_ENGINES = {
-    "duckduckgo": "https://html.duckduckgo.com/html/?q={query}",
-    "bing": "https://www.bing.com/search?q={query}",
-}
+SEARCH_ENGINES = {"duckduckgo": "https://html.duckduckgo.com/html/?q={query}", "bing": "https://www.bing.com/search?q={query}"}
 TRUSTED_DEAL_DOMAINS = {"pepper.ru", "pepper.com"}
-MARKETPLACE_DOMAINS = {
-    "wildberries.ru": "wildberries", "ozon.ru": "ozon", "market.yandex.ru": "yandex_market",
-    "sima-land.ru": "simaland", "detmir.ru": "detmir", "akusherstvo.ru": "akusherstvo", "korablik.ru": "korablik",
-}
+MARKETPLACE_DOMAINS = {"wildberries.ru": "wildberries", "ozon.ru": "ozon", "market.yandex.ru": "yandex_market", "sima-land.ru": "simaland", "detmir.ru": "detmir", "akusherstvo.ru": "akusherstvo", "korablik.ru": "korablik"}
 
 
 def _headers() -> dict[str, str]:
@@ -66,14 +60,10 @@ def search_engine(query: str, engine: str = "duckduckgo", limit: int = 10) -> li
         r.raise_for_status()
     except requests.RequestException as exc:
         return [{"engine": engine, "query": query, "error": str(exc)}]
-    found: list[dict[str, Any]] = []
-    if engine == "duckduckgo":
-        pattern = re.compile(r'<a[^>]+class="result__a"[^>]+href="([^"]+)"[^>]*>(.*?)</a>', re.I | re.S)
-    else:
-        pattern = re.compile(r'<li[^>]*class="b_algo"[\s\S]*?<h2>\s*<a[^>]+href="([^"]+)"[^>]*>(.*?)</a>', re.I)
+    pattern = re.compile(r'<a[^>]+class="result__a"[^>]+href="([^"]+)"[^>]*>(.*?)</a>', re.I | re.S) if engine == "duckduckgo" else re.compile(r'<li[^>]*class="b_algo"[\s\S]*?<h2>\s*<a[^>]+href="([^"]+)"[^>]*>(.*?)</a>', re.I)
+    found = []
     for url, title in pattern.findall(r.text):
-        url = _unwrap_url(html.unescape(url))
-        title = _clean_text(title)
+        url, title = _unwrap_url(html.unescape(url)), _clean_text(title)
         if url.startswith("http") and title:
             found.append({"engine": engine, "query": query, "title": title, "url": url, "source": _source_for(url)})
     return found[:limit]
@@ -84,77 +74,84 @@ def _source_priority(source: str) -> int:
 
 
 def _extract_requested_domains(queries: list[str]) -> set[str]:
-    domains: set[str] = set()
-    for query in queries:
-        for domain in re.findall(r"(?:site:|domain:)([a-z0-9.-]+)", query, re.I):
-            domains.add(domain.lower().removeprefix("www."))
-    return domains
+    return {d.lower().removeprefix("www.") for q in queries for d in re.findall(r"(?:site:|domain:)([a-z0-9.-]+)", q, re.I)}
 
 
 def discover(query: str, limit: int = 8) -> dict[str, Any]:
     queries = [query, f"{query} купить цена", f"{query} скидка акция", f"{query} site:pepper.ru"]
-    results: list[dict[str, Any]] = []
-    errors: list[dict[str, Any]] = []
+    results, errors = [], []
     engines = list(SEARCH_ENGINES)
-    jobs = [(q, engine) for q in queries for engine in engines]
+    jobs = [(q, e) for q in queries for e in engines]
     with ThreadPoolExecutor(max_workers=min(8, len(jobs)), thread_name_prefix="web-search") as executor:
-        futures = [executor.submit(search_engine, q, engine, limit) for q, engine in jobs]
+        futures = [executor.submit(search_engine, q, e, limit) for q, e in jobs]
         for future in as_completed(futures):
             for item in future.result():
                 (errors if item.get("error") else results).append(item)
-
     dedup: dict[str, dict[str, Any]] = {}
     for item in results:
         dedup.setdefault(item["url"].split("#", 1)[0], item)
     unique = list(dedup.values())
-
-    # Do not let a few high-ranking sources consume the complete result budget.
-    # Targeted site: queries are therefore represented first, then the remaining
-    # slots are filled by the best generic results.
     requested_domains = _extract_requested_domains(queries)
-    selected: list[dict[str, Any]] = []
-    selected_urls: set[str] = set()
+    selected, selected_urls, counts = [], set(), {}
     per_source_cap = max(1, min(2, limit // 4 or 1))
 
-    def domain_matches(item: dict[str, Any], domain: str) -> bool:
+    def matches(item: dict[str, Any], domain: str) -> bool:
         current = _domain(item.get("url", ""))
         return current == domain or current.endswith("." + domain) or domain.endswith("." + current)
 
-    targeted = [item for item in unique if any(domain_matches(item, d) for d in requested_domains)]
+    targeted = [i for i in unique if any(matches(i, d) for d in requested_domains)]
     targeted.sort(key=lambda x: (_source_priority(x.get("source", "")), x.get("title", "").lower()))
-    counts: dict[str, int] = {}
     for item in targeted:
         source = item.get("source", "web")
         if counts.get(source, 0) >= per_source_cap or item["url"] in selected_urls:
             continue
-        selected.append(item)
-        selected_urls.add(item["url"])
-        counts[source] = counts.get(source, 0) + 1
-        if len(selected) >= limit:
-            break
-
+        selected.append(item); selected_urls.add(item["url"]); counts[source] = counts.get(source, 0) + 1
+        if len(selected) >= limit: break
     if len(selected) < limit:
-        fallback = [item for item in unique if item["url"] not in selected_urls]
+        fallback = [i for i in unique if i["url"] not in selected_urls]
         fallback.sort(key=lambda x: (_source_priority(x.get("source", "")), x.get("title", "").lower()))
-        selected.extend(fallback[: limit - len(selected)])
-
+        selected.extend(fallback[:limit - len(selected)])
     return {"query": query, "count": len(selected), "items": selected[:max(1, limit)], "queries": queries, "engines": engines, "errors": errors, "source_counts": counts}
+
+
+def _classify_response(url: str, final_url: str, status: int, content_type: str, raw_html: str) -> str:
+    if status in {401, 403}:
+        return "auth_required" if status == 401 else "blocked"
+    if status == 429:
+        return "rate_limited"
+    if status >= 400:
+        return "http_error"
+    lower = raw_html.lower()
+    final_path = urlparse(final_url).path.lower()
+    if any(x in final_path for x in ("/login", "/signin", "/auth")) or any(x in lower[:100000] for x in ("captcha", "robot check", "access denied")):
+        return "auth_required" if any(x in final_path for x in ("/login", "/signin", "/auth")) else "blocked"
+    if "text/html" not in content_type and "application/xhtml" not in content_type:
+        return "non_html"
+    has_product = bool(re.search(r"application/ld\+json", raw_html, re.I) and re.search(r'"@type"\s*:\s*(?:\[\s*)?[\"\']Product', raw_html, re.I))
+    if has_product:
+        return "product_page"
+    text = _clean_text(raw_html).lower()
+    if len(text) < 250 or any(x in text for x in ("enable javascript", "javascript is required", "please wait")):
+        return "dynamic_page"
+    return "html_page"
 
 
 def fetch_page(url: str) -> dict[str, Any]:
     parsed = urlparse(url)
     if parsed.scheme not in {"http", "https"} or not parsed.netloc:
-        return {"url": url, "ok": False, "error": "invalid_url"}
+        return {"url": url, "ok": False, "error": "invalid_url", "page_class": "invalid_url"}
     try:
         r = requests.get(url, headers=_headers(), timeout=TIMEOUT, allow_redirects=True)
         content_type = r.headers.get("content-type", "")
-        if "text/html" not in content_type and "application/xhtml" not in content_type:
-            return {"url": url, "final_url": r.url, "ok": r.ok, "status": r.status_code, "content_type": content_type, "text": ""}
-        raw_html = r.text[:MAX_RAW_HTML_CHARS]
-        return {"url": url, "final_url": r.url, "ok": r.ok, "status": r.status_code, "content_type": content_type,
-                "source": _source_for(r.url), "title": _page_title(raw_html), "text": _clean_text(raw_html)[:MAX_PAGE_CHARS], "raw_html": raw_html}
+        raw_html = r.text[:MAX_RAW_HTML_CHARS] if ("text/html" in content_type or "application/xhtml" in content_type) else ""
+        page_class = _classify_response(url, r.url, r.status_code, content_type, raw_html)
+        return {"url": url, "final_url": r.url, "ok": r.ok, "status": r.status_code, "content_type": content_type, "page_class": page_class,
+                "source": _source_for(r.url), "title": _page_title(raw_html), "text": _clean_text(raw_html)[:MAX_PAGE_CHARS], "raw_html": raw_html,
+                "blocked": page_class == "blocked", "dynamic": page_class == "dynamic_page", "auth_required": page_class == "auth_required", "rate_limited": page_class == "rate_limited"}
+    except requests.Timeout as exc:
+        return {"url": url, "ok": False, "error": str(exc), "page_class": "timeout", "source": _source_for(url)}
     except requests.RequestException as exc:
-        return {"url": url, "ok": False, "error": str(exc), "source": _source_for(url)}
+        return {"url": url, "ok": False, "error": str(exc), "page_class": "network_error", "source": _source_for(url)}
 
 
 def _page_title(raw: str) -> str:
@@ -164,8 +161,7 @@ def _page_title(raw: str) -> str:
 
 def research(query: str, limit: int = 8, fetch_pages: bool = True) -> dict[str, Any]:
     discovered = discover(query, limit)
-    if not fetch_pages or not discovered["items"]:
-        return discovered
+    if not fetch_pages or not discovered["items"]: return discovered
     with ThreadPoolExecutor(max_workers=min(6, len(discovered["items"])), thread_name_prefix="web-fetch") as executor:
         futures = [executor.submit(fetch_page, item["url"]) for item in discovered["items"]]
         pages = [f.result() for f in as_completed(futures)]
