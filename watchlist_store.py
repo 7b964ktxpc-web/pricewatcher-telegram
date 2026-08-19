@@ -18,19 +18,7 @@ def _connect() -> sqlite3.Connection:
 
 def init_db() -> None:
     with _connect() as conn:
-        conn.execute(
-            """CREATE TABLE IF NOT EXISTS watchlist (
-                chat_id INTEGER NOT NULL,
-                item_key TEXT NOT NULL,
-                title TEXT NOT NULL,
-                url TEXT,
-                source TEXT,
-                last_price REAL,
-                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                PRIMARY KEY (chat_id, item_key)
-            )"""
-        )
+        conn.execute("""CREATE TABLE IF NOT EXISTS watchlist (chat_id INTEGER NOT NULL, item_key TEXT NOT NULL, title TEXT NOT NULL, url TEXT, source TEXT, last_price REAL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY (chat_id, item_key))""")
         conn.commit()
 
 
@@ -41,28 +29,28 @@ def add(chat_id: int, item: dict[str, Any]) -> None:
     source = item.get("source") or item.get("marketplace")
     price = item.get("price", item.get("lowest_price"))
     with _connect() as conn:
-        conn.execute(
-            """INSERT INTO watchlist(chat_id,item_key,title,url,source,last_price)
-               VALUES(?,?,?,?,?,?)
-               ON CONFLICT(chat_id,item_key) DO UPDATE SET
-                 title=excluded.title,
-                 url=excluded.url,
-                 source=excluded.source,
-                 last_price=excluded.last_price,
-                 updated_at=CURRENT_TIMESTAMP""",
-            (chat_id, key, title, url, source, price if isinstance(price, (int, float)) else None),
-        )
+        conn.execute("""INSERT INTO watchlist(chat_id,item_key,title,url,source,last_price) VALUES(?,?,?,?,?,?) ON CONFLICT(chat_id,item_key) DO UPDATE SET title=excluded.title,url=excluded.url,source=excluded.source,last_price=excluded.last_price,updated_at=CURRENT_TIMESTAMP""", (chat_id, key, title, url, source, price if isinstance(price, (int, float)) else None))
         conn.commit()
 
 
 def list_for_chat(chat_id: int) -> list[dict[str, Any]]:
     init_db()
     with _connect() as conn:
-        rows = conn.execute(
-            "SELECT chat_id,item_key,title,url,source,last_price,created_at,updated_at FROM watchlist WHERE chat_id=? ORDER BY updated_at DESC",
-            (chat_id,),
-        ).fetchall()
+        rows = conn.execute("SELECT chat_id,item_key,title,url,source,last_price,created_at,updated_at FROM watchlist WHERE chat_id=? ORDER BY updated_at DESC", (chat_id,)).fetchall()
     return [dict(row) for row in rows]
+
+
+def list_all() -> list[dict[str, Any]]:
+    init_db()
+    with _connect() as conn:
+        rows = conn.execute("SELECT chat_id,item_key,title,url,source,last_price,created_at,updated_at FROM watchlist ORDER BY updated_at ASC").fetchall()
+    return [dict(row) for row in rows]
+
+
+def update_price(chat_id: int, item_key: str, price: float) -> None:
+    with _connect() as conn:
+        conn.execute("UPDATE watchlist SET last_price=?, updated_at=CURRENT_TIMESTAMP WHERE chat_id=? AND item_key=?", (price, chat_id, item_key))
+        conn.commit()
 
 
 def remove(chat_id: int, item_key: str) -> bool:
