@@ -36,9 +36,9 @@ HELP_TEXT = (
     "ℹ️ <b>Как пользоваться</b>\n\n"
     "🔎 <b>Найти товар</b> — напиши товар, возраст/размер и бюджет.\n"
     "📸 <b>По фото</b> — пришли фотографию товара.\n"
-    "💰 <b>Найти дешевле</b> — пришли товар или ссылку, а я попробую найти более выгодные варианты.\n"
+    "🔎 <b>Найти дешевле</b> — пришли товар или ссылку, а я попробую найти более выгодные варианты.\n"
     "🔔 <b>Мои товары</b> — здесь будут товары, за которыми я слежу.\n"
-    "💬 <b>Спросить AI</b> — можно уточнить запрос обычными словами.\n\n"
+    "💬 <b>Просто поговорить</b> — можно уточнить запрос обычными словами.\n\n"
     "💡 Чем точнее запрос, тем лучше результат: товар + размер/возраст + бюджет."
 )
 
@@ -64,7 +64,7 @@ def send_message(chat_id: int, text: str, reply_markup: dict[str, Any] | None = 
 
 
 def menu_keyboard() -> dict[str, Any]:
-    return {"inline_keyboard": [[{"text": "🔎 Найти товар", "callback_data": "search"}, {"text": "📸 По фото", "callback_data": "photo"}], [{"text": "🔎 Найти дешевле", "callback_data": "cheaper_menu"}, {"text": "🔔 Мои товары", "callback_data": "watchlist"}], [{"text": "💬 Спросить AI", "callback_data": "chat"}, {"text": "ℹ️ Помощь", "callback_data": "help"}]]}
+    return {"inline_keyboard": [[{"text": "🔎 Найти товар", "callback_data": "search"}, {"text": "📸 По фото", "callback_data": "photo"}], [{"text": "🔎 Найти дешевле", "callback_data": "cheaper_menu"}, {"text": "🔔 Мои товары", "callback_data": "watchlist"}], [{"text": "💬 Просто поговорить", "callback_data": "chat"}, {"text": "ℹ️ Помощь", "callback_data": "help"}]]}
 
 
 def back_keyboard() -> dict[str, Any]:
@@ -76,7 +76,7 @@ def deal_keyboard(item: dict[str, Any], index: int) -> dict[str, Any]:
     url = item.get("url") or item.get("product_url")
     if isinstance(url, str) and url.startswith(("http://", "https://")):
         rows.append([{"text": "🛒 Купить", "url": url}])
-    rows.append([{"text": "🔎 Найти дешевле", "callback_data": f"cheaper:{index}"}, {"text": "🔄 Проверить", "callback_data": f"refresh:{index}"}])
+    rows.append([{"text": "💰 Найти дешевле", "callback_data": f"cheaper:{index}"}, {"text": "🔄 Проверить", "callback_data": f"refresh:{index}"}])
     rows.append([{"text": "🔔 Следить", "callback_data": f"watch:{index}"}])
     return {"inline_keyboard": rows}
 
@@ -217,85 +217,3 @@ def _handle_callback(chat_id: int, data: str) -> None:
 
 def _looks_like_search(text: str) -> bool:
     return bool(re.search(r"найди|поищи|подбери|купить|нужн|товар|дешевле|скидк|цена|₽|руб|размер|лет|год|мальчик|девочк", text, re.I))
-
-
-def handle_text(chat_id: int, text: str) -> None:
-    text = text.strip()
-    if not text:
-        return
-    _remember(chat_id, "user", text)
-    if text in {"/start", "/menu"}:
-        send_message(chat_id, WELCOME_TEXT, menu_keyboard())
-        return
-    if text == "/help":
-        send_message(chat_id, HELP_TEXT, menu_keyboard())
-        return
-    if text in {"/watchlist", "мои товары", "отслеживаемые товары"}:
-        _show_watchlist(chat_id)
-        return
-    if _looks_like_search(text):
-        _search(chat_id, "\n".join(f"{m['role']}: {m['content']}" for m in _context(chat_id)))
-        return
-    reply = ai_chat(_context(chat_id))
-    _remember(chat_id, "assistant", reply)
-    send_message(chat_id, reply, menu_keyboard())
-
-
-def _telegram_file(file_id: str) -> tuple[bytes, str]:
-    info = _api("getFile", {"file_id": file_id}).get("result", {})
-    path = info.get("file_path")
-    if not path:
-        raise RuntimeError("Telegram did not return file_path")
-    response = requests.get(f"https://api.telegram.org/file/bot{BOT_TOKEN}/{path}", timeout=TIMEOUT)
-    response.raise_for_status()
-    mime = "image/png" if path.lower().endswith(".png") else "image/jpeg"
-    return response.content, mime
-
-
-def handle_photo(chat_id: int, file_id: str, caption: str = "") -> None:
-    send_message(chat_id, "📸 Смотрю на фото и пытаюсь понять, что это за товар…")
-    try:
-        image, mime = _telegram_file(file_id)
-        description = describe_image(image, mime)
-        query = str(description.get("query") or caption or "детский товар")
-        _remember(chat_id, "user", f"Фото товара: {query}")
-        if caption:
-            query = f"{query}. Дополнение пользователя: {caption}"
-        _search(chat_id, query)
-    except Exception as exc:
-        print(f"Telegram photo search error: {exc}", flush=True)
-        send_message(chat_id, "Не смогла надёжно определить товар по фото. Пришли более чёткое фото или напиши, что именно нужно найти.", menu_keyboard())
-
-
-def run_once(offset: int | None = None) -> int | None:
-    if not enabled():
-        raise RuntimeError("TELEGRAM_BOT_TOKEN is not configured")
-    payload = {"timeout": 5, "allowed_updates": ["message", "callback_query"]}
-    if offset is not None:
-        payload["offset"] = offset
-    updates = _api("getUpdates", payload).get("result", [])
-    next_offset = offset
-    for update in updates:
-        next_offset = int(update["update_id"]) + 1
-        callback = update.get("callback_query")
-        if callback:
-            chat = callback.get("message", {}).get("chat", {})
-            chat_id = chat.get("id")
-            _api("answerCallbackQuery", {"callback_query_id": callback["id"]})
-            if chat_id:
-                try:
-                    _handle_callback(int(chat_id), str(callback.get("data") or ""))
-                except Exception as exc:
-                    print(f"Telegram callback error: {exc}", flush=True)
-                    send_message(int(chat_id), "Не удалось выполнить действие. Попробуй ещё раз.", menu_keyboard())
-            continue
-        message = update.get("message", {})
-        chat_id = message.get("chat", {}).get("id")
-        if not chat_id:
-            continue
-        if message.get("photo"):
-            largest = max(message["photo"], key=lambda photo: photo.get("width", 0) * photo.get("height", 0))
-            handle_photo(int(chat_id), str(largest["file_id"]), str(message.get("caption") or ""))
-        elif message.get("text"):
-            handle_text(int(chat_id), str(message["text"]))
-    return next_offset
