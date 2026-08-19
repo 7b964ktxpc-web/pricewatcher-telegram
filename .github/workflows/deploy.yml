@@ -22,9 +22,11 @@ jobs:
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: |
           TOKEN_B64="$(printf '%s' "$TELEGRAM_BOT_TOKEN" | base64 -w0)"
           DEEPSEEK_B64="$(printf '%s' "$DEEPSEEK_API_KEY" | base64 -w0)"
+          HF_B64="$(printf '%s' "$HF_TOKEN" | base64 -w0)"
           ssh '${{ secrets.TIMEWEB_USER }}@${{ secrets.TIMEWEB_HOST }}' "set -e
             mkdir -p /opt/marketplace-parser/repo
             cd /opt/marketplace-parser/repo
@@ -51,6 +53,14 @@ jobs:
               printf '\n' >> .env.telegram
               echo 'DeepSeek fallback configured.'
             fi
+            if [ -n '$HF_B64' ]; then
+              printf 'HF_TOKEN=' >> .env.telegram
+              printf '%s' '$HF_B64' | base64 -d >> .env.telegram
+              printf '\n' >> .env.telegram
+              echo 'Hugging Face vision token configured.'
+            else
+              echo 'WARNING: HF_TOKEN secret is not configured; photo search will be unavailable.'
+            fi
             chmod 600 .env.telegram
 
             docker compose --env-file .env.telegram up -d --build --remove-orphans
@@ -58,14 +68,14 @@ jobs:
             echo '=== CONTAINERS ==='
             docker compose ps
             echo '=== TELEGRAM BOT STATE ==='
-            docker inspect repo-telegram-bot-1 --format '{{.State.Status}} {{.State.Restarting}}' || true
+            docker compose ps telegram-bot
 
             echo '=== WAITING FOR HEALTH ==='
             for i in \$(seq 1 15); do
               if curl -fsS --max-time 5 http://127.0.0.1:8010/health; then
                 echo
                 echo 'HEALTH OK'
-                if docker inspect repo-telegram-bot-1 --format '{{.State.Status}}' 2>/dev/null | grep -qx running; then
+                if docker compose ps --status running --services | grep -qx telegram-bot; then
                   echo 'TELEGRAM BOT RUNNING'
                   exit 0
                 fi
