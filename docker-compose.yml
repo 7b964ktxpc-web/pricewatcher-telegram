@@ -10,12 +10,24 @@ services:
       PARSER_RETRIES: "2"
       PARSER_BACKOFF: "1.0"
       WB_PUBLIC_ENABLED: "0"
+      HF_TOKEN: ${HF_TOKEN:-}
+      HF_AI_SPACE: ${HF_AI_SPACE:-victor/Qwen3.8-27B-free-endpoint}
+      HF_AI_TIMEOUT: ${HF_AI_TIMEOUT:-90}
+      GROQ_API_KEY: ${GROQ_API_KEY:-}
+      GROQ_MODEL: ${GROQ_MODEL:-llama-3.3-70b-versatile}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      GEMINI_MODEL: ${GEMINI_MODEL:-gemini-2.5-flash}
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
+      DEEPSEEK_MODEL: ${DEEPSEEK_MODEL:-deepseek-chat}
+      PARSER_CATALOG_DB: /app/data/catalog.db
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8010/health', timeout=3)"]
       interval: 30s
       timeout: 5s
       retries: 3
       start_period: 10s
+    volumes:
+      - parser-data:/app/data
 
   telegram-bot:
     build: .
@@ -25,7 +37,7 @@ services:
       marketplace-parser:
         condition: service_healthy
     environment:
-      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:?TELEGRAM_BOT_TOKEN is required}
       DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
       DEEPSEEK_MODEL: ${DEEPSEEK_MODEL:-deepseek-chat}
       HF_TOKEN: ${HF_TOKEN:-}
@@ -53,7 +65,7 @@ services:
       telegram-bot:
         condition: service_started
     environment:
-      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:?TELEGRAM_BOT_TOKEN is required}
       WATCHLIST_DB_PATH: /app/data/watchlist.sqlite3
       WATCHLIST_CHECK_INTERVAL: ${WATCHLIST_CHECK_INTERVAL:-1800}
       WATCHLIST_CHECK_TIMEOUT: ${WATCHLIST_CHECK_TIMEOUT:-20}
@@ -62,4 +74,5 @@ services:
       - telegram-data:/app/data
 
 volumes:
+  parser-data:
   telegram-data:
