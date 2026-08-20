@@ -3,6 +3,9 @@ name: Deploy to Timeweb
 on:
   workflow_dispatch:
   workflow_call:
+  push:
+    branches:
+      - main
 
 permissions:
   contents: read
