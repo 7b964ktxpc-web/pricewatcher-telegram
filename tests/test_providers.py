@@ -1,6 +1,6 @@
 import pytest
 
-from providers import HEALTH, PROVIDERS, search_sources
+from providers import HEALTH, PROVIDERS
 
 
 @pytest.fixture(autouse=True)
@@ -12,7 +12,8 @@ def reset_provider_health():
 
 
 def test_provider_registry():
-    assert {"wildberries", "ozon", "yandex_market"}.issubset(PROVIDERS)
+    assert {"wildberries", "ozon"}.issubset(PROVIDERS)
+    assert "yandex_market" not in PROVIDERS
 
 
 def test_wb_provider_handles_non_200_without_raising(monkeypatch):
@@ -58,20 +59,14 @@ def test_retry_on_429(monkeypatch):
 
 def test_search_sources_deduplicates_and_sorts(monkeypatch):
     class FakeProvider:
-        def search(self, query, limit):
-            return type("Result", (), {
-                "source": "fake",
-                "marketplace": "fake",
-                "status": "ok",
-                "items": [
-                    {"marketplace": "fake", "product_id": "2", "price": 500},
-                    {"marketplace": "fake", "product_id": "1", "price": 300},
-                    {"marketplace": "fake", "product_id": "1", "price": 300},
-                ],
-                "error": None,
-            })()
+        def __init__(self, items):
+            self.items = items
 
-    monkeypatch.setitem(PROVIDERS, "fake", FakeProvider())
-    result = search_sources("футболка", 10, ["fake"])
+        def search(self, query, limit):
+            return type("Result", (), {"status": "ok", "items": self.items})()
+
+    monkeypatch.setitem(PROVIDERS, "test_a", FakeProvider([{"id": "1", "price": 1200}]))
+    monkeypatch.setitem(PROVIDERS, "test_b", FakeProvider([{"id": "1", "price": 900}, {"id": "2", "price": 1000}]))
+    result = search_sources("футболка", 10, ["test_a", "test_b"])
     assert result["count"] == 2
-    assert [x["price"] for x in result["items"]] == [300, 500]
+    assert result["items"][0]["price"] == 900
