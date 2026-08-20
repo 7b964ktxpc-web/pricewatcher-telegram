@@ -10,7 +10,7 @@ import requests
 
 from feed_adapters import FEED_ADAPTERS
 
-ALLOWED_SOURCES = {"wildberries", "ozon", "yandex_market", "simaland", "detmir", "akusherstvo", "korablik"}
+ALLOWED_SOURCES = {"wildberries", "ozon", "simaland", "detmir", "akusherstvo", "korablik"}
 TIMEOUT = float(os.getenv("AI_ROUTER_TIMEOUT", "20"))
 
 
@@ -65,7 +65,7 @@ def _provider_plan(name: str, prompt: str) -> dict[str, Any] | None:
 
 
 def _prompt(query: str) -> str:
-    return f'''Разбери покупательский запрос. Верни JSON: query, category, age, gender, size, max_price, keywords, marketplaces. marketplaces выбирай только из wildberries, ozon, yandex_market, simaland, detmir, akusherstvo, korablik. Если данных нет — null. Не выдумывай. Запрос: {query}'''
+    return f'''Разбери покупательский запрос. Верни JSON: query, category, age, gender, size, max_price, keywords, marketplaces. marketplaces выбирай только из wildberries, ozon, simaland, detmir, akusherstvo, korablik. Если данных нет — null. Не выдумывай. Запрос: {query}'''
 
 
 def _local_fallback_plan(query: str) -> dict[str, Any]:
@@ -88,12 +88,7 @@ def _local_fallback_plan(query: str) -> dict[str, Any]:
         "брюк": "брюки", "игруш": "игрушки", "рюкзак": "рюкзак",
     }
     category = next((value for needle, value in category_map.items() if needle in lower), None)
-    return {
-        "query": query.strip(), "category": category, "age": age, "gender": gender, "size": None,
-        "max_price": max_price, "keywords": [category] if category else [],
-        "marketplaces": sorted(ALLOWED_SOURCES), "limit": 20,
-        "ai_parse_error": False, "plan_source": "local-fallback",
-    }
+    return {"query": query.strip(), "category": category, "age": age, "gender": gender, "size": None, "max_price": max_price, "keywords": [category] if category else [], "marketplaces": sorted(ALLOWED_SOURCES), "limit": 20, "ai_parse_error": False, "plan_source": "local-fallback"}
 
 
 def build_plan(query: str) -> dict[str, Any]:
@@ -102,7 +97,6 @@ def build_plan(query: str) -> dict[str, Any]:
     plans: list[dict[str, Any]] = []
     env_keys = {"hf": "HF_TOKEN", "deepseek": "DEEPSEEK_API_KEY", "groq": "GROQ_API_KEY", "gemini": "GEMINI_API_KEY"}
     configured = [p for p in providers if os.getenv(env_keys[p])]
-
     if configured:
         with ThreadPoolExecutor(max_workers=min(4, len(configured)), thread_name_prefix="ai-plan") as executor:
             futures = {executor.submit(_provider_plan, provider, prompt): provider for provider in configured}
@@ -115,10 +109,6 @@ def build_plan(query: str) -> dict[str, Any]:
                 if result:
                     result["_provider"] = provider
                     plans.append(result)
-
-    # Never block the production search on a public Gradio Space. If all
-    # configured AI providers fail or none are configured, use deterministic
-    # local parsing and continue to source discovery.
     if not plans:
         return _local_fallback_plan(query)
 
@@ -161,7 +151,7 @@ def resolve_sources(names: list[str]) -> list[str]:
             if adapter.configured():
                 resolved.append(name)
             continue
-        if name in {"wildberries", "ozon", "yandex_market", "simaland"}:
+        if name in {"wildberries", "ozon", "simaland"}:
             resolved.append(name)
             feed_key = f"{name}_feed"
             adapter = FEED_ADAPTERS.get(feed_key)
@@ -176,16 +166,4 @@ def resolve_sources(names: list[str]) -> list[str]:
 
 
 def router_status() -> dict[str, Any]:
-    return {
-        "agents": {
-            "qwen_space": False,
-            "huggingface_router": bool(os.getenv("HF_TOKEN")),
-            "deepseek": bool(os.getenv("DEEPSEEK_API_KEY")),
-            "groq": bool(os.getenv("GROQ_API_KEY")),
-            "gemini": bool(os.getenv("GEMINI_API_KEY")),
-        },
-        "sources": sorted(ALLOWED_SOURCES),
-        "query_expansion": True,
-        "bounded_agent_calls": 4,
-        "feed_source_resolution": True,
-    }
+    return {"agents": {"qwen_space": False, "huggingface_router": bool(os.getenv("HF_TOKEN")), "deepseek": bool(os.getenv("DEEPSEEK_API_KEY")), "groq": bool(os.getenv("GROQ_API_KEY")), "gemini": bool(os.getenv("GEMINI_API_KEY"))}, "sources": sorted(ALLOWED_SOURCES), "query_expansion": True, "bounded_agent_calls": 4, "feed_source_resolution": True}
