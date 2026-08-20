@@ -17,7 +17,7 @@ def _download_telegram_file(file_id: str) -> tuple[bytes, str]:
     return response.content, mime_type
 
 
-def _handle_photo(chat_id: int, photos: list[dict[str, Any]]) -> None:
+def _handle_photo(chat_id: int, photos: list[dict[str, Any]], caption: str = "") -> None:
     if not photos:
         return
     largest = max((photo for photo in photos if isinstance(photo, dict)), key=lambda photo: int(photo.get("file_size") or 0), default=None)
@@ -27,7 +27,8 @@ def _handle_photo(chat_id: int, photos: list[dict[str, Any]]) -> None:
     try:
         image_bytes, mime_type = _download_telegram_file(str(largest["file_id"]))
         description = bot.describe_image(image_bytes, mime_type)
-        query = str(description.get("query") or "").strip()
+        vision_query = str(description.get("query") or "").strip()
+        query = caption.strip() or vision_query
         if not query:
             raise RuntimeError("vision returned an empty query")
         bot._remember(chat_id, "user", f"Фото: {query}")
@@ -66,7 +67,8 @@ def _handle_update(update: dict[str, Any]) -> None:
                 except Exception:
                     bot.send_message(chat_id, "💬 Расскажи, какой товар ищем — помогу подобрать.", bot.menu_keyboard())
     elif message.get("photo"):
-        _handle_photo(chat_id, message.get("photo") or [])
+        caption = message.get("caption") if isinstance(message.get("caption"), str) else ""
+        _handle_photo(chat_id, message.get("photo") or [], caption)
 
     callback = update.get("callback_query") or {}
     if callback:
@@ -79,7 +81,10 @@ def _handle_update(update: dict[str, Any]) -> None:
         cb_message = callback.get("message") or {}
         cb_chat = (cb_message.get("chat") or {}).get("id")
         if cb_chat is not None:
-            bot._handle_callback(cb_chat, callback.get("data") or "")
+            try:
+                bot._handle_callback(cb_chat, callback.get("data") or "")
+            except Exception as exc:
+                print(f"Telegram callback error: {exc}", flush=True)
 
 
 def run_once(offset: int | None) -> int | None:
