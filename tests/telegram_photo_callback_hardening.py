@@ -15,4 +15,7 @@ def test_callback_error_does_not_escape(monkeypatch):
     def fail(*args, **kwargs):
         raise RuntimeError("callback failure")
     monkeypatch.setattr("telegram_bot_runner.bot._handle_callback", fail)
-    _handle_update({"callback_query": {"id": "cb1", "message": {"chat": {"id": 1}}, "data": "search"}})
+    try:
+        _handle_update({"callback_query": {"id": "cb1", "message": {"chat": {"id": 1}}, "data": "search"}})
+    except RuntimeError:
+        assert False, "callback exception escaped update handler"
