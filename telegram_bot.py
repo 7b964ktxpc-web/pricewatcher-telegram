@@ -11,6 +11,7 @@ from agent_router import build_plan
 from conversation_agent import chat as ai_chat
 from live_search_agent import search_live
 from telegram_photo_search import describe_image
+from search_context import resolve_search_query
 from watchlist_store import add as add_watch, init_db as init_watchlist_db, list_for_chat, remove as remove_watch
 
 TELEGRAM_API = "https://api.telegram.org/bot{token}/{method}"
@@ -160,8 +161,11 @@ def _rerun_deal_action(chat_id: int, index: int, mode: str) -> None:
         return
     title = str(results[index].get("title") or "товар")
     _typing(chat_id)
+    action_query = f"найди дешевле: {title}" if mode == "cheaper" else f"проверь цену: {title}"
+    search_query = resolve_search_query(action_query, _context(chat_id), results)
+    _remember(chat_id, "user", "Найди дешевле" if mode == "cheaper" else "Проверь цену")
     send_message(chat_id, "Хорошо, сейчас посмотрю варианты подешевле 🔎" if mode == "cheaper" else "Сейчас перепроверю цену 🔄")
-    _search(chat_id, f"найди дешевле: {title}" if mode == "cheaper" else title)
+    _search(chat_id, search_query)
 
 def _handle_callback(chat_id: int, data: str) -> None:
     if data in {"home", "start"}:
