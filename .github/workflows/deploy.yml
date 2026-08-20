@@ -180,7 +180,7 @@ echo "DEPLOY VERIFICATION FAILED"
 docker compose ps
 docker compose logs --tail=200
 exit 1
-REMOTE
+          REMOTE
 
       - name: Publish production deployment status
         if: always()
