@@ -21,14 +21,16 @@ def _normalise_page(page: dict[str, Any], query: str) -> dict[str, Any]:
     }
 
 
+def _run_research(search_query: str, limit: int) -> dict[str, Any]:
+    return research(search_query, limit=max(2, min(2, limit)), fetch_pages=True)
+
+
 def search_web(query: str, limit: int = 8) -> dict[str, Any]:
-    # Keep one user query plus one purchase-oriented query. The previous
-    # implementation expanded to many queries and fetched pages for every
-    # query, which could make a single API request exceed production timeouts.
+    # Keep the production request bounded: two search variants, executed in
+    # parallel, with at most two pages fetched for each variant.
     targeted = source_queries([query, f"{query} купить цена"])
-    targeted_queries = [item["query"] for item in targeted[:2]]
-    queries = [query, f"{query} купить цена", *targeted_queries]
-    unique_queries = list(dict.fromkeys(queries))[:4]
+    targeted_queries = [item["query"] for item in targeted[:1]]
+    queries = list(dict.fromkeys([query, f"{query} купить цена", *targeted_queries]))[:2]
 
     offers: list[dict[str, Any]] = []
     extracted_pages: list[dict[str, Any]] = []
@@ -36,20 +38,27 @@ def search_web(query: str, limit: int = 8) -> dict[str, Any]:
     pages: list[dict[str, Any]] = []
     engines: set[str] = set()
 
-    for search_query in unique_queries:
-        result = research(search_query, limit=max(2, min(3, limit)), fetch_pages=True)
-        engines.update(result.get("engines", []))
-        errors.extend(result.get("errors", []))
-        pages.extend(result.get("pages", []))
-        for page in result.get("pages", []):
-            extracted = extract_product_page(page, query)
-            if extracted:
-                offers.extend(extracted[:3])
-                extracted_pages.append({"url": page.get("final_url") or page.get("url"), "count": len(extracted), "source": page.get("source")})
+    with ThreadPoolExecutor(max_workers=len(queries), thread_name_prefix="web-search") as executor:
+        futures = {executor.submit(_run_research, search_query, limit): search_query for search_query in queries}
+        for future in as_completed(futures):
+            search_query = futures[future]
+            try:
+                result = future.result()
+            except Exception as exc:
+                errors.append({"query": search_query, "error": str(exc)})
+                continue
+            engines.update(result.get("engines", []))
+            errors.extend(result.get("errors", []))
+            pages.extend(result.get("pages", []))
+            for page in result.get("pages", []):
+                extracted = extract_product_page(page, query)
+                if extracted:
+                    offers.extend(extracted[:3])
+                    extracted_pages.append({"url": page.get("final_url") or page.get("url"), "count": len(extracted), "source": page.get("source")})
 
     failed_pages = [p for p in pages if p.get("page_type") in {"blocked", "rate_limited", "auth_required", "dynamic_page", "timeout", "network_error", "empty_page"}]
-    if failed_pages:
-        fallback = fallback_search(query, failed_pages, limit=min(4, limit))
+    if failed_pages and not offers:
+        fallback = fallback_search(query, failed_pages[:4], limit=min(3, limit))
         engines.update(fallback.get("engines", []))
         errors.extend(fallback.get("errors", []))
         for item in fallback.get("items", []):
@@ -61,7 +70,7 @@ def search_web(query: str, limit: int = 8) -> dict[str, Any]:
                 offers.append(_normalise_page(item, query))
 
     if not offers:
-        discovered = research(query, limit=limit, fetch_pages=False)
+        discovered = research(query, limit=min(3, limit), fetch_pages=False)
         offers = [_normalise_page(item, query) for item in discovered.get("items", [])]
         engines.update(discovered.get("engines", []))
         errors.extend(discovered.get("errors", []))
@@ -79,7 +88,7 @@ def search_web(query: str, limit: int = 8) -> dict[str, Any]:
         "extracted_pages": extracted_pages,
         "engines": sorted(engines),
         "errors": errors,
-        "fallback_used": bool(failed_pages),
+        "fallback_used": bool(failed_pages and not offers),
         "failed_pages": len(failed_pages),
         "ready": bool(dedup),
     }
@@ -89,8 +98,6 @@ def search_web_batch(queries: list[str], limit: int = 8) -> list[dict[str, Any]]
     unique = [q for q in list(dict.fromkeys(queries))[:2] if q.strip()]
     if not unique:
         return []
-    # Search the small query set concurrently so one slow engine does not
-    # serialize the whole request.
     results: list[dict[str, Any]] = []
     with ThreadPoolExecutor(max_workers=min(2, len(unique)), thread_name_prefix="web-search") as executor:
         futures = {executor.submit(search_web, query, limit): query for query in unique}
