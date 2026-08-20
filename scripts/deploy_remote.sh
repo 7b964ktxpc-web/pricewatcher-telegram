@@ -81,12 +81,16 @@ for i in $(seq 1 15); do
         echo "SEARCH SMOKE TEST FAILED: AI planning returned an error"
         exit 1
       fi
-      if printf '%s' "$search_response" | grep -Eq '"error"[[:space:]]*:[[:space:]]*"[^"]+"'; then
-        echo "SEARCH SMOKE TEST FAILED: search returned an error"
+      # The response contains nested source errors for blocked/unconfigured
+      # providers. Those are expected when optional catalogs are absent. Only
+      # fail on a top-level API error field, not arbitrary nested "error" keys.
+      top_level_error="$(printf '%s' "$search_response" | python -c 'import json,sys; d=json.load(sys.stdin); print(d.get("error") or "")')"
+      if [ -n "$top_level_error" ]; then
+        echo "SEARCH SMOKE TEST FAILED: search returned an API error: $top_level_error"
         exit 1
       fi
-      count="$(printf '%s' "$search_response" | sed -n 's/.*"count"[[:space:]]*:[[:space:]]*\([0-9][0-9]*\).*/\1/p' | head -1)"
-      if [ "${count:-0}" -eq 0 ]; then
+      count="$(printf '%s' "$search_response" | python -c 'import json,sys; print(int(json.load(sys.stdin).get("count") or 0))')"
+      if [ "$count" -eq 0 ]; then
         echo "SEARCH SMOKE TEST OK: search endpoint and AI pipeline healthy; no results from currently configured sources"
       else
         echo "SEARCH SMOKE TEST OK: $count result(s)"
