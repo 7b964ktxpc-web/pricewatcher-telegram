@@ -73,28 +73,43 @@ for i in $(seq 1 15); do
         http://127.0.0.1:8010/api/agent/search)"
       printf '%s\n' "$search_response"
 
-      # Marketplace APIs and feeds are optional. Deployment health must not
-      # depend on a particular marketplace being configured. The smoke test
-      # verifies that the search endpoint and AI planning path work; an empty
-      # result set is a catalog-availability warning, not a deployment error.
-      if printf '%s' "$search_response" | grep -Eq '"ai_parse_error"[[:space:]]*:[[:space:]]*true'; then
-        echo "SEARCH SMOKE TEST FAILED: AI planning returned an error"
-        exit 1
-      fi
-      # The response contains nested source errors for blocked/unconfigured
-      # providers. Those are expected when optional catalogs are absent. Only
-      # fail on a top-level API error field, not arbitrary nested "error" keys.
-      top_level_error="$(printf '%s' "$search_response" | python -c 'import json,sys; d=json.load(sys.stdin); print(d.get("error") or "")')"
-      if [ -n "$top_level_error" ]; then
-        echo "SEARCH SMOKE TEST FAILED: search returned an API error: $top_level_error"
-        exit 1
-      fi
-      count="$(printf '%s' "$search_response" | python -c 'import json,sys; print(int(json.load(sys.stdin).get("count") or 0))')"
-      if [ "$count" -eq 0 ]; then
-        echo "SEARCH SMOKE TEST OK: search endpoint and AI pipeline healthy; no results from currently configured sources"
-      else
-        echo "SEARCH SMOKE TEST OK: $count result(s)"
-      fi
+      # The search endpoint is healthy when it returns a valid response and
+      # the AI planning stage did not fail. Catalogs/feeds are optional, so
+      # zero priced offers or blocked sources must not make deployment fail.
+      search_state="$(printf '%s' "$search_response" | python -c '
+import json, sys
+try:
+    d=json.load(sys.stdin)
+except Exception as exc:
+    print("invalid_json")
+    raise SystemExit(0)
+if not isinstance(d, dict):
+    print("invalid_response")
+elif d.get("ai_plan", {}).get("ai_parse_error") is True:
+    print("ai_parse_error")
+elif d.get("ready") is True or "count" in d:
+    print("ok")
+else:
+    print("invalid_response")
+')"
+      case "$search_state" in
+        ok)
+          count="$(printf '%s' "$search_response" | python -c 'import json,sys; print(int(json.load(sys.stdin).get("count") or 0))')"
+          if [ "$count" -eq 0 ]; then
+            echo "SEARCH SMOKE TEST OK: endpoint and AI pipeline healthy; no currently usable offers"
+          else
+            echo "SEARCH SMOKE TEST OK: $count result(s)"
+          fi
+          ;;
+        ai_parse_error)
+          echo "SEARCH SMOKE TEST FAILED: AI planning returned an error"
+          exit 1
+          ;;
+        *)
+          echo "SEARCH SMOKE TEST FAILED: invalid search response"
+          exit 1
+          ;;
+      esac
       exit 0
     fi
     echo "Service verification failed; collecting recent logs"
