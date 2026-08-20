@@ -13,7 +13,11 @@ USER_AGENT = os.getenv("WEB_RESEARCH_USER_AGENT", "Mozilla/5.0 (compatible; Mama
 TIMEOUT = float(os.getenv("WEB_RESEARCH_TIMEOUT", "10"))
 MAX_PAGE_CHARS = int(os.getenv("WEB_RESEARCH_MAX_PAGE_CHARS", "30000"))
 MAX_RAW_HTML_CHARS = int(os.getenv("WEB_RESEARCH_MAX_RAW_HTML_CHARS", "60000"))
-SEARCH_ENGINES = {"duckduckgo": "https://html.duckduckgo.com/html/?q={query}", "bing": "https://www.bing.com/search?q={query}"}
+SEARCH_ENGINES = {
+    "duckduckgo": "https://html.duckduckgo.com/html/?q={query}",
+    "duckduckgo_lite": "https://lite.duckduckgo.com/lite/?q={query}",
+    "bing": "https://www.bing.com/search?q={query}",
+}
 TRUSTED_DEAL_DOMAINS = {"pepper.ru", "pepper.com"}
 MARKETPLACE_DOMAINS = {"wildberries.ru": "wildberries", "ozon.ru": "ozon", "market.yandex.ru": "yandex_market", "sima-land.ru": "simaland", "detmir.ru": "detmir", "akusherstvo.ru": "akusherstvo", "korablik.ru": "korablik"}
 
@@ -33,7 +37,7 @@ def _unwrap_url(url: str) -> str:
         target = parse_qs(parsed.query).get("uddg", [None])[0]
         if target:
             return unquote(target)
-    return url
+    return html.unescape(url)
 
 
 def _domain(url: str) -> str:
@@ -51,14 +55,13 @@ def _source_for(url: str) -> str:
 
 
 def extract_price(text: str) -> float | None:
-    """Extract a plausible ruble price without inventing one."""
     if not text:
         return None
     normalized = text.replace("\xa0", " ").replace("₽", " руб ").replace("р.", " руб ")
     patterns = [
         r"(?:цена|стоимость|от|всего)\s*[:\-]?\s*(\d{1,6}(?:[\s.]\d{3})?(?:[,.]\d{1,2})?)\s*(?:руб(?:лей|ля)?|р)\b",
         r"(\d{1,6}(?:[\s.]\d{3})?(?:[,.]\d{1,2})?)\s*(?:руб(?:лей|ля)?|р)\b",
-        r"(?:₽|руб)\s*(\d{1,6}(?:[\s.]\d{3})?(?:[,.]\d{1,2})?)",
+        r"(?:руб|₽)\s*(\d{1,6}(?:[\s.]\d{3})?(?:[,.]\d{1,2})?)",
     ]
     values: list[float] = []
     for pattern in patterns:
@@ -73,6 +76,32 @@ def extract_price(text: str) -> float | None:
     return min(values) if values else None
 
 
+def _parse_search_html(raw: str, engine: str, query: str, limit: int) -> list[dict[str, Any]]:
+    patterns = []
+    if engine in {"duckduckgo", "duckduckgo_lite"}:
+        patterns = [
+            r'<a[^>]*class=["\'][^"\']*result__a[^"\']*["\'][^>]*href=["\']([^"\']+)["\'][^>]*>(.*?)</a>',
+            r'<a[^>]*class=["\'][^"\']*result-link[^"\']*["\'][^>]*href=["\']([^"\']+)["\'][^>]*>(.*?)</a>',
+        ]
+    else:
+        patterns = [
+            r'<li[^>]*class=["\'][^"\']*b_algo[^"\']*["\'][^>]*>[\s\S]*?<h2[^>]*>\s*<a[^>]*href=["\']([^"\']+)["\'][^>]*>(.*?)</a>',
+            r'<h2[^>]*>\s*<a[^>]*href=["\']([^"\']+)["\'][^>]*>(.*?)</a>',
+        ]
+    found: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for pattern in patterns:
+        for url, title in re.findall(pattern, raw, flags=re.I | re.S):
+            url, title = _unwrap_url(url), _clean_text(title)
+            if not url.startswith("http") or not title or url in seen:
+                continue
+            seen.add(url)
+            found.append({"engine": engine, "query": query, "title": title, "url": url, "source": _source_for(url), "price": extract_price(title)})
+            if len(found) >= limit:
+                return found
+    return found
+
+
 def search_engine(query: str, engine: str = "duckduckgo", limit: int = 10) -> list[dict[str, Any]]:
     template = SEARCH_ENGINES.get(engine)
     if not template:
@@ -82,13 +111,7 @@ def search_engine(query: str, engine: str = "duckduckgo", limit: int = 10) -> li
         r.raise_for_status()
     except requests.RequestException as exc:
         return [{"engine": engine, "query": query, "error": str(exc)}]
-    pattern = (r'<a[^>]+class="result__a"[^>]+href="([^"]+)"[^>]*>(.*?)</a>' if engine == "duckduckgo" else r'<li[^>]*class="b_algo"[\s\S]*?<h2>\s*<a[^>]+href="([^"]+)"[^>]*>(.*?)</a>')
-    found: list[dict[str, Any]] = []
-    for url, title in re.findall(pattern, r.text, flags=re.I | re.S):
-        url, title = _unwrap_url(html.unescape(url)), _clean_text(title)
-        if url.startswith("http") and title:
-            found.append({"engine": engine, "query": query, "title": title, "url": url, "source": _source_for(url), "price": extract_price(title)})
-    return found[:limit]
+    return _parse_search_html(r.text, engine, query, limit)
 
 
 def _source_priority(source: str) -> int:
@@ -104,7 +127,7 @@ def discover(query: str, limit: int = 8) -> dict[str, Any]:
     results, errors = [], []
     engines = list(SEARCH_ENGINES)
     jobs = [(q, e) for q in queries for e in engines]
-    with ThreadPoolExecutor(max_workers=min(8, len(jobs)), thread_name_prefix="web-search") as executor:
+    with ThreadPoolExecutor(max_workers=min(10, len(jobs)), thread_name_prefix="web-search") as executor:
         futures = [executor.submit(search_engine, q, e, limit) for q, e in jobs]
         for future in as_completed(futures):
             for item in future.result():
@@ -144,10 +167,9 @@ def _page_title(raw: str) -> str:
 
 def _classify_page(status: int, final_url: str, content_type: str, text: str, raw_html: str) -> str:
     lower = (text + " " + raw_html[:12000]).lower()
-    host = _domain(final_url)
     if status == 429:
         return "rate_limited"
-    if status in {401} or any(x in lower for x in ("sign in", "войти", "авторизуйтесь")) and any(x in lower for x in ("login", "account", "личный кабинет")):
+    if status in {401} and ("login" in lower or "войти" in lower):
         return "auth_required"
     if status in {403, 406, 451} or any(x in lower for x in ("access denied", "доступ запрещен", "captcha", "cloudflare")):
         return "blocked"
@@ -155,7 +177,7 @@ def _classify_page(status: int, final_url: str, content_type: str, text: str, ra
         return "non_html"
     if len(text.strip()) < 200 and any(x in lower for x in ("enable javascript", "javascript required", "включите javascript")):
         return "dynamic_page"
-    if host and text:
+    if _domain(final_url) and text:
         return "html_page"
     return "empty_page"
 
