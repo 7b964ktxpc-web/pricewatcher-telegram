@@ -6,8 +6,6 @@ from dataclasses import dataclass
 from typing import Any
 from urllib.parse import quote_plus
 
-import requests
-
 from feed_adapters import FEED_ADAPTERS
 from marketplace_adapters import ADAPTERS, adapter_status
 from normalizer import normalize_product
@@ -18,10 +16,7 @@ TIMEOUT = float(os.getenv("PARSER_TIMEOUT", "12"))
 RETRIES = max(0, int(os.getenv("PARSER_RETRIES", "2")))
 BACKOFF = max(0.0, float(os.getenv("PARSER_BACKOFF", "0.7")))
 RETRY_STATUSES = {429, 500, 502, 503, 504}
-HEALTH = SourceHealthRegistry(
-    base_cooldown_s=float(os.getenv("SOURCE_COOLDOWN_S", "60")),
-    max_cooldown_s=float(os.getenv("SOURCE_MAX_COOLDOWN_S", "1800")),
-)
+HEALTH = SourceHealthRegistry(base_cooldown_s=float(os.getenv("SOURCE_COOLDOWN_S", "60")), max_cooldown_s=float(os.getenv("SOURCE_MAX_COOLDOWN_S", "1800")))
 
 
 @dataclass
@@ -43,12 +38,7 @@ class PublicProvider:
     @staticmethod
     def session() -> requests.Session:
         s = requests.Session()
-        s.headers.update({
-            "User-Agent": UA,
-            "Accept": "application/json, text/plain, */*",
-            "Accept-Language": "ru-RU,ru;q=0.9,en;q=0.8",
-            "Referer": "https://www.google.com/",
-        })
+        s.headers.update({"User-Agent": UA, "Accept": "application/json, text/plain, */*", "Accept-Language": "ru-RU,ru;q=0.9,en;q=0.8", "Referer": "https://www.google.com/"})
         return s
 
     @staticmethod
@@ -81,10 +71,7 @@ def _dedupe(items: list[dict[str, Any]], limit: int) -> list[dict[str, Any]]:
             continue
         seen.add(key)
         result.append(item)
-    result.sort(key=lambda x: (
-        x.get("price") is None,
-        x.get("price") if isinstance(x.get("price"), (int, float)) else float("inf"),
-    ))
+    result.sort(key=lambda x: (x.get("price") is None, x.get("price") if isinstance(x.get("price"), (int, float)) else float("inf")))
     return result[:limit]
 
 
@@ -95,10 +82,7 @@ class WildberriesProvider(PublicProvider):
     def search(self, query: str, limit: int = 20) -> ProviderResult:
         if not HEALTH.allow(self.name):
             return ProviderResult(self.name, self.marketplace, [], "cooldown", "source temporarily paused after repeated blocking")
-        candidates = [
-            ("https://search.wb.ru/exactmatch/ru/common/v9/search", {"resultset": "catalog", "sort": "popular", "suppressSpellcheck": "false"}),
-            ("https://search.wb.ru/exactmatch/ru/common/v7/search", {"resultset": "catalog", "sort": "popular"}),
-        ]
+        candidates = [("https://search.wb.ru/exactmatch/ru/common/v9/search", {"resultset": "catalog", "sort": "popular", "suppressSpellcheck": "false"}), ("https://search.wb.ru/exactmatch/ru/common/v7/search", {"resultset": "catalog", "sort": "popular"})]
         common = {"appType": 1, "curr": "rub", "dest": int(os.getenv("WB_DEST", "-1257786")), "page": 1, "query": query, "spp": 30}
         s = self.session()
         last = None
@@ -148,27 +132,6 @@ class OzonProvider(PublicProvider):
             return result
 
 
-class YandexMarketProvider(PublicProvider):
-    name = "yandex-market-public"
-    marketplace = "yandex_market"
-
-    def search(self, query: str, limit: int = 20) -> ProviderResult:
-        if not HEALTH.allow(self.name):
-            return ProviderResult(self.name, self.marketplace, [], "cooldown", "source temporarily paused after repeated blocking")
-        try:
-            r = self.get(self.session(), f"https://market.yandex.ru/search?text={quote_plus(query)}", allow_redirects=True)
-            if r.status_code != 200:
-                result = ProviderResult(self.name, self.marketplace, [], "blocked", f"HTTP {r.status_code}")
-            else:
-                result = ProviderResult(self.name, self.marketplace, [], "html_only", "search page reachable; structured extraction requires an approved feed/adapter")
-            HEALTH.record(self.name, result.status, result.error)
-            return result
-        except requests.RequestException as e:
-            result = ProviderResult(self.name, self.marketplace, [], "error", str(e))
-            HEALTH.record(self.name, result.status, result.error)
-            return result
-
-
 class SimaLandProvider(PublicProvider):
     name = "simaland-public"
     marketplace = "simaland"
@@ -193,7 +156,6 @@ class SimaLandProvider(PublicProvider):
 PROVIDERS = {
     "wildberries": WildberriesProvider(),
     "ozon": OzonProvider(),
-    "yandex_market": YandexMarketProvider(),
     "simaland": SimaLandProvider(),
     **FEED_ADAPTERS,
     **ADAPTERS,
