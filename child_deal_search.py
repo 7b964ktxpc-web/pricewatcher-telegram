@@ -23,22 +23,24 @@ def search_child_deals(text: str, max_results: int = 12) -> dict[str, Any]:
     queries = build_search_queries(parsed)
     discovered: list[dict[str, Any]] = []
     seen: set[str] = set()
+    discovery_limit = max(max_results * 2, 24)
 
     for query in queries:
-        result = search_web(query, limit=max_results)
+        result = search_web(query, limit=discovery_limit)
         for item in result.get("items", []):
             url = item.get("url")
             if not url or url in seen:
                 continue
             seen.add(url)
             discovered.append(item)
-            if len(discovered) >= max_results:
+            if len(discovered) >= discovery_limit:
                 break
-        if len(discovered) >= max_results:
+        if len(discovered) >= discovery_limit:
             break
 
-    verified = build_verified_deals(discovered, limit=min(max_results, 8))
-    confirmed = sorted(verified["items"], key=_sort_key)
+    verification_limit = min(discovery_limit, max(max_results, 16))
+    verified = build_verified_deals(discovered, limit=verification_limit)
+    confirmed = sorted(verified["items"], key=_sort_key)[:max_results]
     grouped = group_offers(confirmed)
     budget = parsed.get("budget_max")
     if budget is not None:
