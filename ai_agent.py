@@ -24,7 +24,8 @@ class QwenAgent:
 
     def __init__(self, space: str = SPACE):
         self.space = space
-        self.client = Client(space, token=HF_TOKEN, verbose=False)
+        # gradio_client uses hf_token for Hugging Face authentication.
+        self.client = Client(space, hf_token=HF_TOKEN, verbose=False)
         self.api = self.client.view_api(all_endpoints=True, print_info=False)
 
     def _endpoint(self) -> str:
