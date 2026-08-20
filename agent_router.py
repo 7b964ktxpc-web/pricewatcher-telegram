@@ -8,7 +8,6 @@ from typing import Any
 
 import requests
 
-from ai_agent import plan_search
 from feed_adapters import FEED_ADAPTERS
 
 ALLOWED_SOURCES = {"wildberries", "ozon", "yandex_market", "simaland", "detmir", "akusherstvo", "korablik"}
@@ -69,6 +68,34 @@ def _prompt(query: str) -> str:
     return f'''Разбери покупательский запрос. Верни JSON: query, category, age, gender, size, max_price, keywords, marketplaces. marketplaces выбирай только из wildberries, ozon, yandex_market, simaland, detmir, akusherstvo, korablik. Если данных нет — null. Не выдумывай. Запрос: {query}'''
 
 
+def _local_fallback_plan(query: str) -> dict[str, Any]:
+    lower = query.casefold()
+    max_price = None
+    price_match = re.search(r"(?:до|не дороже|макс(?:имум)?)\s*(\d[\d\s]{1,8})\s*(?:₽|руб(?:лей|ля)?)?", lower)
+    if price_match:
+        try:
+            max_price = int(re.sub(r"\s+", "", price_match.group(1)))
+        except ValueError:
+            pass
+    age = None
+    age_match = re.search(r"(\d{1,2})\s*(?:лет|год(?:а)?)", lower)
+    if age_match:
+        age = int(age_match.group(1))
+    gender = "мальчик" if "мальчик" in lower else "девочка" if "девочка" in lower else None
+    category_map = {
+        "футбол": "футболка", "футболк": "футболка", "джинс": "джинсы", "куртк": "куртка",
+        "кроссов": "кроссовки", "плать": "платье", "обув": "обувь", "штаны": "штаны",
+        "брюк": "брюки", "игруш": "игрушки", "рюкзак": "рюкзак",
+    }
+    category = next((value for needle, value in category_map.items() if needle in lower), None)
+    return {
+        "query": query.strip(), "category": category, "age": age, "gender": gender, "size": None,
+        "max_price": max_price, "keywords": [category] if category else [],
+        "marketplaces": sorted(ALLOWED_SOURCES), "limit": 20,
+        "ai_parse_error": False, "plan_source": "local-fallback",
+    }
+
+
 def build_plan(query: str) -> dict[str, Any]:
     prompt = _prompt(query)
     providers = ["hf", "deepseek", "groq", "gemini"]
@@ -76,28 +103,24 @@ def build_plan(query: str) -> dict[str, Any]:
     env_keys = {"hf": "HF_TOKEN", "deepseek": "DEEPSEEK_API_KEY", "groq": "GROQ_API_KEY", "gemini": "GEMINI_API_KEY"}
     configured = [p for p in providers if os.getenv(env_keys[p])]
 
-    with ThreadPoolExecutor(max_workers=max(1, min(4, len(configured))), thread_name_prefix="ai-plan") as executor:
-        futures = {executor.submit(_provider_plan, provider, prompt): provider for provider in configured}
-        for future in as_completed(futures):
-            provider = futures[future]
-            try:
-                result = future.result()
-            except Exception:
-                result = None
-            if result:
-                result["_provider"] = provider
-                plans.append(result)
+    if configured:
+        with ThreadPoolExecutor(max_workers=min(4, len(configured)), thread_name_prefix="ai-plan") as executor:
+            futures = {executor.submit(_provider_plan, provider, prompt): provider for provider in configured}
+            for future in as_completed(futures):
+                provider = futures[future]
+                try:
+                    result = future.result()
+                except Exception:
+                    result = None
+                if result:
+                    result["_provider"] = provider
+                    plans.append(result)
 
+    # Never block the production search on a public Gradio Space. If all
+    # configured AI providers fail or none are configured, use deterministic
+    # local parsing and continue to source discovery.
     if not plans:
-        qwen = plan_search(query)
-        if qwen and not qwen.get("ai_parse_error"):
-            qwen["_provider"] = "qwen-space"
-            plans.append(qwen)
-        elif qwen:
-            return qwen
-
-    if not plans:
-        return {"query": query, "category": None, "age": None, "gender": None, "size": None, "max_price": None, "keywords": [], "marketplaces": sorted(ALLOWED_SOURCES), "limit": 20, "ai_parse_error": True, "ai_error": "No AI provider returned a plan"}
+        return _local_fallback_plan(query)
 
     def score(p: dict[str, Any]) -> int:
         return sum(p.get(k) is not None for k in ("category", "age", "gender", "size", "max_price")) + min(len(p.get("keywords") or []), 3)
@@ -107,6 +130,7 @@ def build_plan(query: str) -> dict[str, Any]:
     best["marketplaces"] = markets or sorted(ALLOWED_SOURCES)
     best["agents_consulted"] = [p.get("_provider") for p in plans]
     best.pop("_provider", None)
+    best.setdefault("ai_parse_error", False)
     return best
 
 
@@ -154,7 +178,7 @@ def resolve_sources(names: list[str]) -> list[str]:
 def router_status() -> dict[str, Any]:
     return {
         "agents": {
-            "qwen_space": True,
+            "qwen_space": False,
             "huggingface_router": bool(os.getenv("HF_TOKEN")),
             "deepseek": bool(os.getenv("DEEPSEEK_API_KEY")),
             "groq": bool(os.getenv("GROQ_API_KEY")),
@@ -162,6 +186,6 @@ def router_status() -> dict[str, Any]:
         },
         "sources": sorted(ALLOWED_SOURCES),
         "query_expansion": True,
-        "bounded_agent_calls": 5,
+        "bounded_agent_calls": 4,
         "feed_source_resolution": True,
     }
