@@ -44,6 +44,27 @@ def _handle_photo(chat_id: int, photos: list[dict[str, Any]], caption: str = "")
         bot.send_message(chat_id, "📸 <b>Не смогла разобрать фото.</b>\n\nПопробуй другое фото или напиши название товара текстом.", bot.menu_keyboard())
 
 
+def _handle_text(chat_id: int, value: str) -> None:
+    bot._remember(chat_id, "user", value)
+    if bot._looks_like_search(value):
+        search_query = resolve_search_query(value, bot._context(chat_id), bot._last_results.get(chat_id, []))
+        if search_query != value:
+            bot.send_message(chat_id, "Поняла 🙂 Уточняю предыдущий поиск и проверяю новые варианты…")
+        bot._search(chat_id, search_query)
+        return
+
+    try:
+        reply = bot.ai_chat(bot._context(chat_id))
+        if isinstance(reply, str) and reply.strip():
+            bot._remember(chat_id, "assistant", reply)
+            bot.send_message(chat_id, reply, bot.menu_keyboard())
+        else:
+            bot.send_message(chat_id, "💬 Расскажи, какой товар ищем — помогу подобрать.", bot.menu_keyboard())
+    except Exception as exc:
+        print(f"Telegram conversation error: {exc}", flush=True)
+        bot.send_message(chat_id, "💬 Расскажи, какой товар ищем — помогу подобрать.", bot.menu_keyboard())
+
+
 def _handle_update(update: dict[str, Any]) -> None:
     message = update.get("message") or {}
     chat = message.get("chat") or {}
@@ -58,22 +79,7 @@ def _handle_update(update: dict[str, Any]) -> None:
         elif value.startswith("/help"):
             bot.send_message(chat_id, bot.HELP_TEXT, bot.menu_keyboard())
         elif value:
-            bot._remember(chat_id, "user", value)
-            if bot._looks_like_search(value):
-                search_query = resolve_search_query(value, bot._context(chat_id), bot._last_results.get(chat_id, []))
-                if search_query != value:
-                    bot.send_message(chat_id, "Поняла 🙂 Уточняю предыдущий поиск и проверяю новые варианты…")
-                bot._search(chat_id, search_query)
-            else:
-                try:
-                    reply = bot.ai_chat(value, bot._context(chat_id))
-                    if isinstance(reply, str) and reply.strip():
-                        bot._remember(chat_id, "assistant", reply)
-                        bot.send_message(chat_id, reply, bot.menu_keyboard())
-                    else:
-                        bot.send_message(chat_id, "💬 Расскажи, какой товар ищем — помогу подобрать.", bot.menu_keyboard())
-                except Exception:
-                    bot.send_message(chat_id, "💬 Расскажи, какой товар ищем — помогу подобрать.", bot.menu_keyboard())
+            _handle_text(chat_id, value)
     elif message.get("photo"):
         caption = message.get("caption") if isinstance(message.get("caption"), str) else ""
         _handle_photo(chat_id, message.get("photo") or [], caption)
@@ -90,7 +96,9 @@ def _handle_update(update: dict[str, Any]) -> None:
         cb_chat = (cb_message.get("chat") or {}).get("id")
         if cb_chat is not None:
             try:
-                bot._handle_callback(cb_chat, callback.get("data") or "")
+                data = callback.get("data") or ""
+                bot._remember(cb_chat, "user", f"Нажала кнопку: {data}")
+                bot._handle_callback(cb_chat, data)
             except Exception as exc:
                 print(f"Telegram callback error: {exc}", flush=True)
 
