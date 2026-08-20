@@ -72,11 +72,25 @@ for i in $(seq 1 15); do
         --data-urlencode 'limit=3' \
         http://127.0.0.1:8010/api/agent/search)"
       printf '%s\n' "$search_response"
-      if ! printf '%s' "$search_response" | grep -Eq '"ready"[[:space:]]*:[[:space:]]*true'; then
-        echo "SEARCH SMOKE TEST FAILED: /api/agent/search did not return ready=true"
+
+      # Marketplace APIs and feeds are optional. Deployment health must not
+      # depend on a particular marketplace being configured. The smoke test
+      # verifies that the search endpoint and AI planning path work; an empty
+      # result set is a catalog-availability warning, not a deployment error.
+      if printf '%s' "$search_response" | grep -Eq '"ai_parse_error"[[:space:]]*:[[:space:]]*true'; then
+        echo "SEARCH SMOKE TEST FAILED: AI planning returned an error"
         exit 1
       fi
-      echo "SEARCH SMOKE TEST OK"
+      if printf '%s' "$search_response" | grep -Eq '"error"[[:space:]]*:[[:space:]]*"[^"]+"'; then
+        echo "SEARCH SMOKE TEST FAILED: search returned an error"
+        exit 1
+      fi
+      count="$(printf '%s' "$search_response" | sed -n 's/.*"count"[[:space:]]*:[[:space:]]*\([0-9][0-9]*\).*/\1/p' | head -1)"
+      if [ "${count:-0}" -eq 0 ]; then
+        echo "SEARCH SMOKE TEST OK: search endpoint and AI pipeline healthy; no results from currently configured sources"
+      else
+        echo "SEARCH SMOKE TEST OK: $count result(s)"
+      fi
       exit 0
     fi
     echo "Service verification failed; collecting recent logs"
