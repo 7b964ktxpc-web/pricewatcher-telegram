@@ -9,6 +9,7 @@ import requests
 
 from agent_router import build_plan
 from conversation_agent import chat as ai_chat
+from live_search_agent import search_live
 from telegram_photo_search import describe_image
 from watchlist_store import add as add_watch, init_db as init_watchlist_db, list_for_chat, remove as remove_watch
 
@@ -109,34 +110,24 @@ def _extract_search_items(data: dict[str, Any]) -> list[dict[str, Any]]:
 
 def _search(chat_id: int, query: str) -> None:
     try:
-        build_plan(query)
-    except Exception:
-        pass
-    endpoints = [("/api/agent/search", {"q": query, "limit": 8}), ("/api/child-search", {"q": query, "limit": 8})]
-    data: dict[str, Any] | None = None
-    errors: list[str] = []
-    for path, params in endpoints:
-        try:
-            response = requests.get(f"{PARSER_BASE_URL}{path}", params=params, timeout=TIMEOUT)
-            response.raise_for_status()
-            candidate = response.json()
-            if _extract_search_items(candidate) or candidate.get("ready") is True:
-                data = candidate
-                break
-            errors.append(f"{path}: invalid response")
-        except Exception as exc:
-            errors.append(f"{path}: {exc}")
-    if data is None:
-        print(f"Telegram search unavailable: {'; '.join(errors)}", flush=True)
+        result = search_live(query, limit=8)
+    except Exception as exc:
+        print(f"Telegram live search error: {exc}", flush=True)
         send_message(chat_id, "😔 <b>Поиск сейчас недоступен</b>\n\nПопробуй ещё раз немного позже.", menu_keyboard())
         return
-    items = _extract_search_items(data)
+
+    items = _extract_search_items(result)
     if not items:
+        errors = result.get("errors") or []
+        if errors:
+            print(f"Telegram live search returned no results: {'; '.join(errors)}", flush=True)
         send_message(chat_id, "🔎 <b>Подходящих вариантов не найдено</b>\n\nПопробуй изменить бюджет, размер или описание товара.", menu_keyboard())
         return
+
     _last_results[chat_id] = items[:8]
     _remember(chat_id, "assistant", f"Нашла варианты по запросу: {query}")
-    send_message(chat_id, f"🎉 <b>Нашла {len(_last_results[chat_id])} вариантов</b>\n\nСначала показываю наиболее подходящие 👇")
+    queries = result.get("queries") or [query]
+    send_message(chat_id, f"🎉 <b>Нашла {len(_last_results[chat_id])} вариантов</b>\n\n🔎 Проверила несколько поисковых формулировок.\n\nСначала показываю наиболее подходящие 👇")
     for index, item in enumerate(_last_results[chat_id], 1):
         title = str(item.get("title") or "Товар")
         price = item.get("lowest_price", item.get("price"))
