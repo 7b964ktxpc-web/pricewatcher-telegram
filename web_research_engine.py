@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import html
 import os
 import re
@@ -20,6 +21,8 @@ SEARCH_ENGINES = {
 }
 TRUSTED_DEAL_DOMAINS = {"pepper.ru", "pepper.com"}
 MARKETPLACE_DOMAINS = {"wildberries.ru": "wildberries", "ozon.ru": "ozon", "market.yandex.ru": "yandex_market", "sima-land.ru": "simaland", "detmir.ru": "detmir", "akusherstvo.ru": "akusherstvo", "korablik.ru": "korablik"}
+SEARCH_HOSTS = {"bing.com", "duckduckgo.com", "lite.duckduckgo.com"}
+STOP_WORDS = {"найди", "найти", "купить", "цена", "цены", "до", "руб", "рублей", "для", "лет", "год", "года", "мальчик", "девочка", "ребенок", "детский", "детская", "скидка", "акция"}
 
 
 def _headers() -> dict[str, str]:
@@ -32,12 +35,20 @@ def _clean_text(value: str) -> str:
 
 
 def _unwrap_url(url: str) -> str:
+    url = html.unescape(url)
     parsed = urlparse(url)
     if parsed.netloc.endswith("duckduckgo.com"):
         target = parse_qs(parsed.query).get("uddg", [None])[0]
         if target:
             return unquote(target)
-    return html.unescape(url)
+    if parsed.netloc.endswith("bing.com") and parsed.path.startswith("/ck/a"):
+        encoded = parse_qs(parsed.query).get("u", [None])[0]
+        if encoded and encoded.startswith("a1"):
+            try:
+                return base64.urlsafe_b64decode(encoded[2:] + "===").decode("utf-8")
+            except (ValueError, UnicodeDecodeError):
+                pass
+    return url
 
 
 def _domain(url: str) -> str:
@@ -76,12 +87,28 @@ def extract_price(text: str) -> float | None:
     return min(values) if values else None
 
 
+def _query_tokens(query: str) -> set[str]:
+    tokens = re.findall(r"[а-яёa-z]{4,}", query.lower())
+    return {t for t in tokens if t not in STOP_WORDS and not t.isdigit()}
+
+
+def _relevant_result(title: str, url: str, query: str) -> bool:
+    domain = _domain(url)
+    if not domain or domain in SEARCH_HOSTS or any(domain.endswith("." + h) for h in SEARCH_HOSTS):
+        return False
+    tokens = _query_tokens(query)
+    if not tokens:
+        return True
+    haystack = f"{title} {url}".lower()
+    return any(token in haystack for token in tokens)
+
+
 def _parse_search_html(raw: str, engine: str, query: str, limit: int) -> list[dict[str, Any]]:
-    patterns = []
     if engine in {"duckduckgo", "duckduckgo_lite"}:
         patterns = [
+            r'<a[^>]*href=["\']([^"\']+)["\'][^>]*class=["\'][^"\']*result__a[^"\']*["\'][^>]*>(.*?)</a>',
             r'<a[^>]*class=["\'][^"\']*result__a[^"\']*["\'][^>]*href=["\']([^"\']+)["\'][^>]*>(.*?)</a>',
-            r'<a[^>]*class=["\'][^"\']*result-link[^"\']*["\'][^>]*href=["\']([^"\']+)["\'][^>]*>(.*?)</a>',
+            r'<a[^>]*href=["\']([^"\']+)["\'][^>]*class=["\'][^"\']*result-link[^"\']*["\'][^>]*>(.*?)</a>',
         ]
     else:
         patterns = [
@@ -91,9 +118,9 @@ def _parse_search_html(raw: str, engine: str, query: str, limit: int) -> list[di
     found: list[dict[str, Any]] = []
     seen: set[str] = set()
     for pattern in patterns:
-        for url, title in re.findall(pattern, raw, flags=re.I | re.S):
-            url, title = _unwrap_url(url), _clean_text(title)
-            if not url.startswith("http") or not title or url in seen:
+        for raw_url, raw_title in re.findall(pattern, raw, flags=re.I | re.S):
+            url, title = _unwrap_url(raw_url), _clean_text(raw_title)
+            if not url.startswith("http") or not title or url in seen or not _relevant_result(title, url, query):
                 continue
             seen.add(url)
             found.append({"engine": engine, "query": query, "title": title, "url": url, "source": _source_for(url), "price": extract_price(title)})
