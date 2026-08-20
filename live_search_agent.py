@@ -1,9 +1,4 @@
-"""Live search orchestration for user-driven product discovery.
-
-The agent does not require a preloaded catalog. It asks the configured parser/search
-service for fresh results for several AI-expanded query variants, then merges and
-ranks the returned offers.
-"""
+"""Live search orchestration for user-driven product discovery."""
 from __future__ import annotations
 
 import os
@@ -25,11 +20,7 @@ def _items(payload: dict[str, Any]) -> list[dict[str, Any]]:
 
 def _fetch(path: str, query: str, limit: int) -> tuple[str, dict[str, Any] | None, str | None]:
     try:
-        response = requests.get(
-            f"{BASE_URL}{path}",
-            params={"q": query, "limit": limit},
-            timeout=TIMEOUT,
-        )
+        response = requests.get(f"{BASE_URL}{path}", params={"q": query, "limit": limit}, timeout=TIMEOUT)
         response.raise_for_status()
         payload = response.json()
         if not isinstance(payload, dict):
@@ -51,23 +42,20 @@ def _key(item: dict[str, Any]) -> str:
 
 def _price(item: dict[str, Any]) -> float:
     for field in ("lowest_price", "price", "current_price"):
-        value = item.get(field)
         try:
-            return float(value)
+            return float(item.get(field))
         except (TypeError, ValueError):
             continue
     return float("inf")
 
 
-def search_live(original_query: str, limit: int = 8) -> dict[str, Any]:
-    """Plan and execute a bounded, multi-query live search."""
-    plan = build_plan(original_query)
-    queries = expand_queries(plan, original_query)
+def _run_queries(queries: list[str], limit: int) -> tuple[list[dict[str, Any]], list[str], int]:
     endpoints = ["/api/agent/search", "/api/child-search"]
-
     jobs = [(path, query) for query in queries for path in endpoints]
     payloads: list[dict[str, Any]] = []
     errors: list[str] = []
+    if not jobs:
+        return [], errors, 0
     with ThreadPoolExecutor(max_workers=min(6, len(jobs)), thread_name_prefix="live-search") as executor:
         futures = [executor.submit(_fetch, path, query, limit) for path, query in jobs]
         for future in as_completed(futures):
@@ -76,21 +64,53 @@ def search_live(original_query: str, limit: int = 8) -> dict[str, Any]:
                 payloads.append(payload)
             elif error:
                 errors.append(f"{path}: {error}")
-
     merged: dict[str, dict[str, Any]] = {}
     for payload in payloads:
         for item in _items(payload):
             key = _key(item)
             if key and key not in merged:
                 merged[key] = item
-
     results = sorted(merged.values(), key=lambda item: (_price(item), str(item.get("title") or "")))[:limit]
+    return results, errors, len(payloads)
+
+
+def _fallback_query(original_query: str, plan: dict[str, Any]) -> str:
+    """Relax one constraint while preserving the main intent."""
+    for field in ("budget", "max_price", "price", "size", "color", "brand"):
+        value = plan.get(field)
+        if value not in (None, "", [], {}):
+            relaxed = dict(plan)
+            relaxed.pop(field, None)
+            terms = [str(v) for v in relaxed.values() if v not in (None, "", [], {})]
+            if terms:
+                return " ".join(terms)
+    words = original_query.split()
+    return " ".join(words[: max(3, len(words) // 2)])
+
+
+def search_live(original_query: str, limit: int = 8) -> dict[str, Any]:
+    """Plan and execute live search, with one bounded fallback when empty."""
+    plan = build_plan(original_query)
+    queries = expand_queries(plan, original_query)
+    results, errors, responses = _run_queries(queries, limit)
+    fallback_used = False
+    fallback_query = None
+    if not results:
+        fallback_query = _fallback_query(original_query, plan)
+        if fallback_query and fallback_query not in queries:
+            fallback_used = True
+            fallback_results, fallback_errors, fallback_responses = _run_queries([fallback_query], limit)
+            results = fallback_results
+            errors.extend(fallback_errors)
+            responses += fallback_responses
     return {
         "items": results,
         "plan": plan,
         "queries": queries,
-        "sources_attempted": len(jobs),
-        "responses": len(payloads),
+        "fallback_query": fallback_query,
+        "fallback_used": fallback_used,
+        "sources_attempted": len(queries) * 2 + (2 if fallback_used else 0),
+        "responses": responses,
         "errors": errors[:8],
         "live": True,
     }
