@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import re
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any
 
 import requests
@@ -70,23 +71,33 @@ def _prompt(query: str) -> str:
 
 def build_plan(query: str) -> dict[str, Any]:
     prompt = _prompt(query)
-    # Prefer HF routed inference because one HF token can route to multiple
-    # providers/models. Direct providers remain fallbacks when their secrets exist.
     providers = ["hf", "deepseek", "groq", "gemini"]
     plans: list[dict[str, Any]] = []
-    for provider in providers:
-        result = _provider_plan(provider, prompt)
-        if result:
-            result["_provider"] = provider
-            plans.append(result)
 
-    qwen = plan_search(query)
-    if qwen and not qwen.get("ai_parse_error"):
-        qwen["_provider"] = "qwen-space"
-        plans.append(qwen)
+    # Do not call every AI provider sequentially. That multiplied provider
+    # timeouts and made /api/agent/search exceed production's 45s budget.
+    # Consult the configured providers concurrently and keep Qwen-space only
+    # as a fallback when none of the direct providers responds.
+    with ThreadPoolExecutor(max_workers=min(4, len(providers)), thread_name_prefix="ai-plan") as executor:
+        futures = {executor.submit(_provider_plan, provider, prompt): provider for provider in providers if os.getenv({"hf": "HF_TOKEN", "deepseek": "DEEPSEEK_API_KEY", "groq": "GROQ_API_KEY", "gemini": "GEMINI_API_KEY"}[provider])}
+        for future in as_completed(futures):
+            provider = futures[future]
+            try:
+                result = future.result()
+            except Exception:
+                result = None
+            if result:
+                result["_provider"] = provider
+                plans.append(result)
 
     if not plans:
-        return qwen
+        qwen = plan_search(query)
+        if qwen and not qwen.get("ai_parse_error"):
+            qwen["_provider"] = "qwen-space"
+            plans.append(qwen)
+
+    if not plans:
+        return plan_search(query)
 
     def score(p: dict[str, Any]) -> int:
         return sum(p.get(k) is not None for k in ("category", "age", "gender", "size", "max_price")) + min(len(p.get("keywords") or []), 3)
