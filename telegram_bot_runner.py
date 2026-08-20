@@ -18,6 +18,22 @@ def _download_telegram_file(file_id: str) -> tuple[bytes, str]:
     return response.content, mime_type
 
 
+def _personal_welcome(first_name: str) -> str:
+    name = first_name.strip()
+    greeting = f"Привет, {name}! 👋" if name else "Привет! 👋"
+    return (
+        f"{greeting}\n\n"
+        "Я — <b>Мама, тут дешевле! ❤️</b>\n"
+        "Я помогу тебе найти детские товары по хорошей цене и не буду заставлять тебя разбираться в сложных настройках.\n\n"
+        "🔎 Могу сама искать и сравнивать варианты\n"
+        "📸 Могу попробовать найти товар по фотографии\n"
+        "💰 Могу поискать дешевле\n"
+        "🔔 Могу следить за ценой и сообщить о заметном снижении\n\n"
+        "Просто расскажи, что тебе нужно — обычными словами. Например:\n"
+        "<i>«Найди кроссовки мальчику 6 лет, размер 30, до 2500 ₽»</i>"
+    )
+
+
 def _handle_photo(chat_id: int, photos: list[dict[str, Any]], caption: str = "") -> None:
     if not photos:
         return
@@ -52,7 +68,6 @@ def _handle_text(chat_id: int, value: str) -> None:
             bot.send_message(chat_id, "Поняла 🙂 Уточняю предыдущий поиск и проверяю новые варианты…")
         bot._search(chat_id, search_query)
         return
-
     try:
         reply = bot.ai_chat(bot._context(chat_id))
         if isinstance(reply, str) and reply.strip():
@@ -75,7 +90,8 @@ def _handle_update(update: dict[str, Any]) -> None:
     if isinstance(text, str):
         value = text.strip()
         if value.startswith("/start"):
-            bot.send_message(chat_id, bot.WELCOME_TEXT, bot.menu_keyboard())
+            user = message.get("from") or {}
+            bot.send_message(chat_id, _personal_welcome(str(user.get("first_name") or "")), bot.menu_keyboard())
         elif value.startswith("/help"):
             bot.send_message(chat_id, bot.HELP_TEXT, bot.menu_keyboard())
         elif value:
@@ -104,7 +120,7 @@ def _handle_update(update: dict[str, Any]) -> None:
 
 
 def run_once(offset: int | None) -> int | None:
-    result = bot._api("getUpdates", {"offset": offset, "timeout": 25, "allowed_updates": ["message", "callback_query"]})
+    result = bot._api("getUpdates", {"offset": offset, "timeout": 5, "allowed_updates": ["message", "callback_query"]})
     updates = result.get("result") or []
     next_offset = offset
     for update in updates:
