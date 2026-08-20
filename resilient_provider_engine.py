@@ -44,7 +44,7 @@ def search_sources(query: str, limit: int = 20, sources: list[str] | None = None
     feed is configured while preserving the same cooldown/retry/error
     handling as marketplace providers.
     """
-    default_sources = ["wildberries", "ozon", "yandex_market", "simaland", *FEED_ADAPTERS]
+    default_sources = ["wildberries", "ozon", "simaland", *FEED_ADAPTERS]
     selected = list(dict.fromkeys(sources or default_sources))
     if not selected:
         return {"query": query, "count": 0, "items": [], "sources": [], "ready": False}
