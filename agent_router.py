@@ -50,7 +50,7 @@ def _provider_plan(name: str, prompt: str) -> dict[str, Any] | None:
     try:
         if name == "hf" and os.getenv("HF_TOKEN"):
             from huggingface_hub import InferenceClient
-            client = InferenceClient(token=os.environ["HF_TOKEN"])
+            client = InferenceClient(api_key=os.environ["HF_TOKEN"])
             model = os.getenv("HF_ROUTER_MODEL", "Qwen/Qwen3-8B:fastest")
             response = client.chat_completion(model=model, messages=[{"role": "user", "content": prompt}], max_tokens=500, temperature=0)
             return _extract_json(response.choices[0].message.content) or {}
@@ -73,13 +73,11 @@ def build_plan(query: str) -> dict[str, Any]:
     prompt = _prompt(query)
     providers = ["hf", "deepseek", "groq", "gemini"]
     plans: list[dict[str, Any]] = []
+    env_keys = {"hf": "HF_TOKEN", "deepseek": "DEEPSEEK_API_KEY", "groq": "GROQ_API_KEY", "gemini": "GEMINI_API_KEY"}
+    configured = [p for p in providers if os.getenv(env_keys[p])]
 
-    # Do not call every AI provider sequentially. That multiplied provider
-    # timeouts and made /api/agent/search exceed production's 45s budget.
-    # Consult the configured providers concurrently and keep Qwen-space only
-    # as a fallback when none of the direct providers responds.
-    with ThreadPoolExecutor(max_workers=min(4, len(providers)), thread_name_prefix="ai-plan") as executor:
-        futures = {executor.submit(_provider_plan, provider, prompt): provider for provider in providers if os.getenv({"hf": "HF_TOKEN", "deepseek": "DEEPSEEK_API_KEY", "groq": "GROQ_API_KEY", "gemini": "GEMINI_API_KEY"}[provider])}
+    with ThreadPoolExecutor(max_workers=max(1, min(4, len(configured))), thread_name_prefix="ai-plan") as executor:
+        futures = {executor.submit(_provider_plan, provider, prompt): provider for provider in configured}
         for future in as_completed(futures):
             provider = futures[future]
             try:
@@ -95,9 +93,11 @@ def build_plan(query: str) -> dict[str, Any]:
         if qwen and not qwen.get("ai_parse_error"):
             qwen["_provider"] = "qwen-space"
             plans.append(qwen)
+        elif qwen:
+            return qwen
 
     if not plans:
-        return plan_search(query)
+        return {"query": query, "category": None, "age": None, "gender": None, "size": None, "max_price": None, "keywords": [], "marketplaces": sorted(ALLOWED_SOURCES), "limit": 20, "ai_parse_error": True, "ai_error": "No AI provider returned a plan"}
 
     def score(p: dict[str, Any]) -> int:
         return sum(p.get(k) is not None for k in ("category", "age", "gender", "size", "max_price")) + min(len(p.get("keywords") or []), 3)
