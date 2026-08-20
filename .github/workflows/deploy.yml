@@ -95,11 +95,8 @@ jobs:
           export DETMIR_FEED_B64="$(b64 "$DETMIR_FEED_URL")"
           export AKUSHERSTVO_FEED_B64="$(b64 "$AKUSHERSTVO_FEED_URL")"
           export KORABLIK_FEED_B64="$(b64 "$KORABLIK_FEED_URL")"
-          EXPECTED_SHA="$DEPLOY_SHA"
-
-          ssh -i "$HOME/.ssh/id_ed25519" -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=10 \
-            "$TIMEWEB_USER@$TIMEWEB_HOST" \
-            "APP_DIR='$TIMEWEB_APP_DIR' EXPECTED_SHA='$EXPECTED_SHA' TOKEN_B64='$TOKEN_B64' ADMIN_TOKEN_B64='$ADMIN_TOKEN_B64' ADMIN_IDS_B64='$ADMIN_IDS_B64' DEEPSEEK_B64='$DEEPSEEK_B64' HF_B64='$HF_B64' GROQ_B64='$GROQ_B64' GEMINI_B64='$GEMINI_B64' WB_API_B64='$WB_API_B64' YM_API_B64='$YM_API_B64' YM_BUSINESS_B64='$YM_BUSINESS_B64' WB_FEED_B64='$WB_FEED_B64' OZON_FEED_B64='$OZON_FEED_B64' YM_FEED_B64='$YM_FEED_B64' SIMALAND_FEED_B64='$SIMALAND_FEED_B64' DETMIR_FEED_B64='$DETMIR_FEED_B64' AKUSHERSTVO_FEED_B64='$AKUSHERSTVO_FEED_B64' KORABLIK_FEED_B64='$KORABLIK_FEED_B64' bash -se" <<'REMOTE'
+          export EXPECTED_SHA="$DEPLOY_SHA"
+          cat > /tmp/deploy_remote.sh <<'REMOTE_SCRIPT'
           set -euo pipefail
           mkdir -p "$APP_DIR"
           cd "$APP_DIR"
@@ -120,7 +117,7 @@ jobs:
             if [ -n "$value" ]; then
               printf '%s=' "$key" >> .env.telegram
               printf '%s' "$value" | base64 -d >> .env.telegram
-              printf '\n' >> .env.telegram
+              printf '%s\n' '' >> .env.telegram
             fi
           }
           write_secret TELEGRAM_BOT_TOKEN "$TOKEN_B64"
@@ -141,23 +138,6 @@ jobs:
           write_secret AKUSHERSTVO_FEED_URL "$AKUSHERSTVO_FEED_B64"
           write_secret KORABLIK_FEED_URL "$KORABLIK_FEED_B64"
           chmod 600 .env.telegram
-          export TELEGRAM_BOT_TOKEN="$(printf '%s' "$TOKEN_B64" | base64 -d)"
-          export ADMIN_BOT_TOKEN="$(printf '%s' "$ADMIN_TOKEN_B64" | base64 -d)"
-          export ADMIN_USER_IDS="$(printf '%s' "$ADMIN_IDS_B64" | base64 -d)"
-          export DEEPSEEK_API_KEY="$(printf '%s' "$DEEPSEEK_B64" | base64 -d)"
-          export HF_TOKEN="$(printf '%s' "$HF_B64" | base64 -d)"
-          export GROQ_API_KEY="$(printf '%s' "$GROQ_B64" | base64 -d)"
-          export GEMINI_API_KEY="$(printf '%s' "$GEMINI_B64" | base64 -d)"
-          export WB_API_TOKEN="$(printf '%s' "$WB_API_B64" | base64 -d)"
-          export YANDEX_MARKET_API_KEY="$(printf '%s' "$YM_API_B64" | base64 -d)"
-          export YANDEX_MARKET_BUSINESS_ID="$(printf '%s' "$YM_BUSINESS_B64" | base64 -d)"
-          export WB_FEED_URL="$(printf '%s' "$WB_FEED_B64" | base64 -d)"
-          export OZON_FEED_URL="$(printf '%s' "$OZON_FEED_B64" | base64 -d)"
-          export YANDEX_MARKET_FEED_URL="$(printf '%s' "$YM_FEED_B64" | base64 -d)"
-          export SIMALAND_FEED_URL="$(printf '%s' "$SIMALAND_FEED_B64" | base64 -d)"
-          export DETMIR_FEED_URL="$(printf '%s' "$DETMIR_FEED_B64" | base64 -d)"
-          export AKUSHERSTVO_FEED_URL="$(printf '%s' "$AKUSHERSTVO_FEED_B64" | base64 -d)"
-          export KORABLIK_FEED_URL="$(printf '%s' "$KORABLIK_FEED_B64" | base64 -d)"
           docker compose --env-file .env.telegram config >/dev/null
           docker compose --env-file .env.telegram up -d --build --remove-orphans
           docker compose ps
@@ -180,7 +160,11 @@ jobs:
           docker compose ps
           docker compose logs --tail=200
           exit 1
-          REMOTE
+          REMOTE_SCRIPT
+          sed -i 's/^          //' /tmp/deploy_remote.sh
+          ssh -i "$HOME/.ssh/id_ed25519" -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=10 \
+            "$TIMEWEB_USER@$TIMEWEB_HOST" \
+            "APP_DIR='$TIMEWEB_APP_DIR' EXPECTED_SHA='$EXPECTED_SHA' TOKEN_B64='$TOKEN_B64' ADMIN_TOKEN_B64='$ADMIN_TOKEN_B64' ADMIN_IDS_B64='$ADMIN_IDS_B64' DEEPSEEK_B64='$DEEPSEEK_B64' HF_B64='$HF_B64' GROQ_B64='$GROQ_B64' GEMINI_B64='$GEMINI_B64' WB_API_B64='$WB_API_B64' YM_API_B64='$YM_API_B64' YM_BUSINESS_B64='$YM_BUSINESS_B64' WB_FEED_B64='$WB_FEED_B64' OZON_FEED_B64='$OZON_FEED_B64' YM_FEED_B64='$YM_FEED_B64' SIMALAND_FEED_B64='$SIMALAND_FEED_B64' DETMIR_FEED_B64='$DETMIR_FEED_B64' AKUSHERSTVO_FEED_B64='$AKUSHERSTVO_FEED_B64' KORABLIK_FEED_B64='$KORABLIK_FEED_B64' bash -se" < /tmp/deploy_remote.sh
 
       - name: Publish production deployment status
         if: always()
