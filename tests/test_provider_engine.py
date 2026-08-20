@@ -37,6 +37,6 @@ def test_default_search_includes_feed_adapters(monkeypatch):
 
     assert "wildberries_feed" in calls
     assert "ozon_feed" in calls
-    assert "yandex_market_feed" in calls
+    assert "yandex_market_feed" not in calls
     assert "simaland_feed" in calls
     assert result["ready"] is False
