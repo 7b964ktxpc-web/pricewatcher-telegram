@@ -17,7 +17,7 @@ def test_sources():
     sources = response.json()["sources"]
     assert "wildberries" in sources
     assert "ozon" in sources
-    assert "yandex_market" in sources
+    assert "yandex_market" not in sources
     assert "simaland" in sources
 
 
