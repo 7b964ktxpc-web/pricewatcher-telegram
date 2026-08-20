@@ -50,6 +50,29 @@ def _source_for(url: str) -> str:
     return domain
 
 
+def extract_price(text: str) -> float | None:
+    """Extract a plausible ruble price without inventing one."""
+    if not text:
+        return None
+    normalized = text.replace("\xa0", " ").replace("₽", " руб ").replace("р.", " руб ")
+    patterns = [
+        r"(?:цена|стоимость|от|всего)\s*[:\-]?\s*(\d{1,6}(?:[\s.]\d{3})?(?:[,.]\d{1,2})?)\s*(?:руб(?:лей|ля)?|р)\b",
+        r"(\d{1,6}(?:[\s.]\d{3})?(?:[,.]\d{1,2})?)\s*(?:руб(?:лей|ля)?|р)\b",
+        r"(?:₽|руб)\s*(\d{1,6}(?:[\s.]\d{3})?(?:[,.]\d{1,2})?)",
+    ]
+    values: list[float] = []
+    for pattern in patterns:
+        for match in re.finditer(pattern, normalized, re.I):
+            raw = match.group(1).replace(" ", "").replace(".", "").replace(",", ".")
+            try:
+                value = float(raw)
+            except ValueError:
+                continue
+            if 10 <= value <= 10_000_000:
+                values.append(value)
+    return min(values) if values else None
+
+
 def search_engine(query: str, engine: str = "duckduckgo", limit: int = 10) -> list[dict[str, Any]]:
     template = SEARCH_ENGINES.get(engine)
     if not template:
@@ -64,7 +87,7 @@ def search_engine(query: str, engine: str = "duckduckgo", limit: int = 10) -> li
     for url, title in re.findall(pattern, r.text, flags=re.I | re.S):
         url, title = _unwrap_url(html.unescape(url)), _clean_text(title)
         if url.startswith("http") and title:
-            found.append({"engine": engine, "query": query, "title": title, "url": url, "source": _source_for(url)})
+            found.append({"engine": engine, "query": query, "title": title, "url": url, "source": _source_for(url), "price": extract_price(title)})
     return found[:limit]
 
 
@@ -147,7 +170,8 @@ def fetch_page(url: str) -> dict[str, Any]:
         raw_html = r.text[:MAX_RAW_HTML_CHARS] if ("text/html" in content_type or "application/xhtml" in content_type) else ""
         text = _clean_text(raw_html)[:MAX_PAGE_CHARS]
         page_type = _classify_page(r.status_code, r.url, content_type, text, raw_html)
-        return {"url": url, "final_url": r.url, "ok": r.ok and page_type not in {"blocked", "rate_limited", "auth_required"}, "status": r.status_code, "content_type": content_type, "source": _source_for(r.url), "title": _page_title(raw_html), "text": text, "raw_html": raw_html, "page_type": page_type, "blocked": page_type == "blocked", "rate_limited": page_type == "rate_limited", "auth_required": page_type == "auth_required", "dynamic": page_type == "dynamic_page"}
+        title = _page_title(raw_html)
+        return {"url": url, "final_url": r.url, "ok": r.ok and page_type not in {"blocked", "rate_limited", "auth_required"}, "status": r.status_code, "content_type": content_type, "source": _source_for(r.url), "title": title, "text": text, "raw_html": raw_html, "price": extract_price(text) or extract_price(title), "page_type": page_type, "blocked": page_type == "blocked", "rate_limited": page_type == "rate_limited", "auth_required": page_type == "auth_required", "dynamic": page_type == "dynamic_page"}
     except requests.Timeout as exc:
         return {"url": url, "ok": False, "page_type": "timeout", "error": str(exc), "source": _source_for(url)}
     except requests.RequestException as exc:
