@@ -1,0 +1,44 @@
+name: Production deploy trigger
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  actions: write
+  contents: read
+
+concurrency:
+  group: production-deploy-trigger
+  cancel-in-progress: true
+
+jobs:
+  wait-for-ci-and-dispatch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Wait for CI for this exact commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          echo "Waiting for CI on $GITHUB_SHA"
+          for i in $(seq 1 60); do
+            conclusion="$(gh run list --repo "$GITHUB_REPOSITORY" --workflow ci.yml --commit "$GITHUB_SHA" --limit 1 --json status,conclusion --jq '.[0] | if . == null then "missing" elif .status != "completed" then "running" else .conclusion end')"
+            echo "CI state: $conclusion ($i/60)"
+            case "$conclusion" in
+              success) exit 0 ;;
+              failure|cancelled|timed_out|action_required) echo "CI did not pass"; exit 1 ;;
+            esac
+            sleep 10
+          done
+          echo "Timed out waiting for CI"
+          exit 1
+
+      - name: Dispatch production deployment
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh workflow run deploy.yml --repo "$GITHUB_REPOSITORY" --ref main
+          echo "Production deployment dispatched for $GITHUB_SHA"
