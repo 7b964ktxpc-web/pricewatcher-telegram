@@ -68,28 +68,48 @@ def _run_queries(queries: list[str], limit: int) -> tuple[list[dict[str, Any]], 
     for payload in payloads:
         for item in _items(payload):
             key = _key(item)
-            if key and key not in merged:
+            if not key:
+                continue
+            existing = merged.get(key)
+            if existing is None or _price(item) < _price(existing):
                 merged[key] = item
     results = sorted(merged.values(), key=lambda item: (_price(item), str(item.get("title") or "")))[:limit]
     return results, errors, len(payloads)
 
 
-def _fallback_query(original_query: str, plan: dict[str, Any]) -> str:
-    """Relax one constraint while preserving the main intent."""
-    for field in ("budget", "max_price", "price", "size", "color", "brand"):
+def _fallback_query(original_query: str, plan: dict[str, Any]) -> str | None:
+    """Relax only the explicit price ceiling; preserve every product constraint."""
+    price_fields = ("max_price", "budget", "price")
+    has_price = any(plan.get(field) not in (None, "", [], {}) for field in price_fields)
+    if not has_price:
+        return None
+
+    preserved_fields = (
+        "query",
+        "category",
+        "age",
+        "gender",
+        "size",
+        "color",
+        "brand",
+        "keywords",
+    )
+    terms: list[str] = []
+    for field in preserved_fields:
         value = plan.get(field)
-        if value not in (None, "", [], {}):
-            relaxed = dict(plan)
-            relaxed.pop(field, None)
-            terms = [str(v) for v in relaxed.values() if v not in (None, "", [], {})]
-            if terms:
-                return " ".join(terms)
-    words = original_query.split()
-    return " ".join(words[: max(3, len(words) // 2)])
+        if value in (None, "", [], {}):
+            continue
+        if isinstance(value, list):
+            terms.extend(str(item).strip() for item in value if str(item).strip())
+        else:
+            terms.append(str(value).strip())
+
+    query = " ".join(dict.fromkeys(term for term in terms if term))
+    return query or original_query.strip() or None
 
 
 def search_live(original_query: str, limit: int = 8) -> dict[str, Any]:
-    """Plan and execute live search, with one bounded fallback when empty."""
+    """Plan and execute live search, with one bounded price-only fallback when empty."""
     plan = build_plan(original_query)
     queries = expand_queries(plan, original_query)
     results, errors, responses = _run_queries(queries, limit)
