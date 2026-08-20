@@ -42,10 +42,8 @@ HELP_TEXT = (
     "💡 Чем точнее запрос, тем лучше результат: товар + размер/возраст + бюджет."
 )
 
-
 def enabled() -> bool:
     return bool(BOT_TOKEN)
-
 
 def _api(method: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
     response = requests.post(TELEGRAM_API.format(token=BOT_TOKEN, method=method), json=payload or {}, timeout=TIMEOUT)
@@ -55,21 +53,17 @@ def _api(method: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
         raise RuntimeError(data.get("description", "Telegram API error"))
     return data
 
-
 def send_message(chat_id: int, text: str, reply_markup: dict[str, Any] | None = None) -> None:
     payload: dict[str, Any] = {"chat_id": chat_id, "text": text, "parse_mode": "HTML", "disable_web_page_preview": False}
     if reply_markup:
         payload["reply_markup"] = reply_markup
     _api("sendMessage", payload)
 
-
 def menu_keyboard() -> dict[str, Any]:
     return {"inline_keyboard": [[{"text": "🔎 Найти товар", "callback_data": "search"}, {"text": "📸 По фото", "callback_data": "photo"}], [{"text": "🔎 Найти дешевле", "callback_data": "cheaper_menu"}, {"text": "🔔 Мои товары", "callback_data": "watchlist"}], [{"text": "💬 Просто поговорить", "callback_data": "chat"}, {"text": "ℹ️ Помощь", "callback_data": "help"}]]}
 
-
 def back_keyboard() -> dict[str, Any]:
     return {"inline_keyboard": [[{"text": "🏠 Главное меню", "callback_data": "home"}]]}
-
 
 def deal_keyboard(item: dict[str, Any], index: int) -> dict[str, Any]:
     rows: list[list[dict[str, Any]]] = []
@@ -80,20 +74,16 @@ def deal_keyboard(item: dict[str, Any], index: int) -> dict[str, Any]:
     rows.append([{"text": "🔔 Следить", "callback_data": f"watch:{index}"}])
     return {"inline_keyboard": rows}
 
-
 def _remember(chat_id: int, role: str, text: str) -> None:
     _history[chat_id].append({"role": role, "content": text})
 
-
 def _context(chat_id: int) -> list[dict[str, str]]:
     return list(_history[chat_id])
-
 
 def _format_price(value: Any) -> str:
     if isinstance(value, (int, float)):
         return f"{float(value):,.0f} ₽".replace(",", " ")
     return "цена уточняется"
-
 
 def _show_watchlist(chat_id: int) -> None:
     items = list_for_chat(chat_id)
@@ -113,13 +103,9 @@ def _show_watchlist(chat_id: int) -> None:
         send_message(chat_id, text, {"inline_keyboard": rows})
     send_message(chat_id, "Что хочешь сделать дальше?", menu_keyboard())
 
-
 def _extract_search_items(data: dict[str, Any]) -> list[dict[str, Any]]:
     items = data.get("items") or data.get("confirmed") or []
-    if not isinstance(items, list):
-        return []
-    return [dict(item) for item in items if isinstance(item, dict)]
-
+    return [dict(item) for item in items if isinstance(item, dict)] if isinstance(items, list) else []
 
 def _search(chat_id: int, query: str) -> None:
     try:
@@ -134,10 +120,10 @@ def _search(chat_id: int, query: str) -> None:
             response = requests.get(f"{PARSER_BASE_URL}{path}", params=params, timeout=TIMEOUT)
             response.raise_for_status()
             candidate = response.json()
-            if _extract_search_items(candidate):
+            if _extract_search_items(candidate) or candidate.get("ready") is True:
                 data = candidate
                 break
-            errors.append(f"{path}: no results")
+            errors.append(f"{path}: invalid response")
         except Exception as exc:
             errors.append(f"{path}: {exc}")
     if data is None:
@@ -146,7 +132,7 @@ def _search(chat_id: int, query: str) -> None:
         return
     items = _extract_search_items(data)
     if not items:
-        send_message(chat_id, "🔎 <b>Подходящих вариантов пока не нашла</b>\n\nПопробуй изменить бюджет, размер или описание товара.", menu_keyboard())
+        send_message(chat_id, "🔎 <b>Подходящих вариантов не найдено</b>\n\nПопробуй изменить бюджет, размер или описание товара.", menu_keyboard())
         return
     _last_results[chat_id] = items[:8]
     _remember(chat_id, "assistant", f"Нашла варианты по запросу: {query}")
@@ -163,32 +149,26 @@ def _search(chat_id: int, query: str) -> None:
         send_message(chat_id, text, deal_keyboard(item, index - 1))
     send_message(chat_id, "Можно купить, поискать дешевле или включить 🔔 отслеживание.", menu_keyboard())
 
-
 def _rerun_deal_action(chat_id: int, index: int, mode: str) -> None:
     results = _last_results.get(chat_id, [])
     if index < 0 or index >= len(results):
         send_message(chat_id, "Этот результат уже устарел. Давай сделаем новый поиск.", menu_keyboard())
         return
     title = str(results[index].get("title") or "товар")
-    if mode == "cheaper":
-        send_message(chat_id, "🔎 <b>Ищу дешевле…</b>\nСравниваю доступные предложения.")
-        _search(chat_id, f"найди дешевле: {title}")
-    else:
-        send_message(chat_id, "🔄 <b>Проверяю цену…</b>\nИщу актуальные предложения.")
-        _search(chat_id, title)
-
+    send_message(chat_id, "🔎 <b>Ищу дешевле…</b>" if mode == "cheaper" else "🔄 <b>Проверяю цену…</b>")
+    _search(chat_id, f"найди дешевле: {title}" if mode == "cheaper" else title)
 
 def _handle_callback(chat_id: int, data: str) -> None:
     if data in {"home", "start"}:
         send_message(chat_id, WELCOME_TEXT, menu_keyboard())
     elif data == "search":
-        send_message(chat_id, "🔎 <b>Что ищем?</b>\n\nНапиши товар, размер/возраст и бюджет.\nНапример: «Зимняя куртка девочке 6 лет до 5000 ₽»", back_keyboard())
+        send_message(chat_id, "🔎 <b>Что ищем?</b>\n\nНапиши товар, размер/возраст и бюджет.", back_keyboard())
     elif data == "photo":
-        send_message(chat_id, "📸 <b>Пришли фото товара</b>\n\nЯ попробую определить его и найти такой же или похожие варианты.", back_keyboard())
+        send_message(chat_id, "📸 <b>Пришли фото товара</b>\n\nЯ попробую определить его и найти похожие варианты.", back_keyboard())
     elif data == "chat":
-        send_message(chat_id, "💬 <b>Я слушаю</b>\n\nПиши вопрос обычными словами — помогу уточнить поиск или подобрать варианты.", back_keyboard())
+        send_message(chat_id, "💬 <b>Я слушаю</b>\n\nПиши вопрос обычными словами.", back_keyboard())
     elif data == "cheaper_menu":
-        send_message(chat_id, "🔎 <b>Найти дешевле</b>\n\nНапиши, какой товар хочешь купить, и я попробую найти более выгодные предложения.", back_keyboard())
+        send_message(chat_id, "🔎 <b>Найти дешевле</b>\n\nНапиши товар, который хочешь купить.", back_keyboard())
     elif data == "watchlist":
         _show_watchlist(chat_id)
     elif data == "help":
@@ -202,18 +182,14 @@ def _handle_callback(chat_id: int, data: str) -> None:
         results = _last_results.get(chat_id, [])
         if 0 <= index < len(results):
             add_watch(chat_id, results[index])
-            send_message(chat_id, "🔔 <b>Готово!</b>\n\nЯ буду следить за ценой этого товара и сообщу о заметном снижении.", menu_keyboard())
+            send_message(chat_id, "🔔 <b>Готово!</b>\n\nЯ буду следить за ценой этого товара.", menu_keyboard())
         else:
             send_message(chat_id, "Этот результат уже устарел. Сделай новый поиск.", menu_keyboard())
     elif data.startswith("unwatch:"):
         key = data.split(":", 1)[1]
-        if remove_watch(chat_id, key):
-            send_message(chat_id, "❌ Товар убран из отслеживания.", menu_keyboard())
-        else:
-            send_message(chat_id, "Этот товар уже не отслеживается.", menu_keyboard())
+        send_message(chat_id, "❌ Товар убран из отслеживания." if remove_watch(chat_id, key) else "Этот товар уже не отслеживается.", menu_keyboard())
     else:
         send_message(chat_id, "Не поняла действие. Открой главное меню и попробуй ещё раз.", menu_keyboard())
-
 
 def _looks_like_search(text: str) -> bool:
     return bool(re.search(r"найди|поищи|подбери|купить|нужн|товар|дешевле|скидк|цена|₽|руб|размер|лет|год|мальчик|девочк", text, re.I))
