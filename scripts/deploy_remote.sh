@@ -46,17 +46,18 @@ write_secret AKUSHERSTVO_FEED_URL "$AKUSHERSTVO_FEED_B64"
 write_secret KORABLIK_FEED_URL "$KORABLIK_FEED_B64"
 
 chmod 600 .env.telegram
-docker compose --env-file .env.telegram config >/dev/null
-docker compose --env-file .env.telegram up -d --build --remove-orphans
-docker compose ps
+COMPOSE=(docker compose --env-file .env.telegram)
+"${COMPOSE[@]}" config >/dev/null
+"${COMPOSE[@]}" up -d --build --remove-orphans
+"${COMPOSE[@]}" ps
 
 for i in $(seq 1 15); do
   if curl -fsS --max-time 5 http://127.0.0.1:8010/health >/dev/null; then
     echo "HEALTH OK"
-    docker compose ps --status running --services | grep -qx marketplace-parser
-    docker compose ps --status running --services | grep -qx telegram-bot
-    docker compose ps --status running --services | grep -qx admin-bot
-    docker compose ps --status running --services | grep -qx watchlist-checker
+    "${COMPOSE[@]}" ps --status running --services | grep -qx marketplace-parser
+    "${COMPOSE[@]}" ps --status running --services | grep -qx telegram-bot
+    "${COMPOSE[@]}" ps --status running --services | grep -qx admin-bot
+    "${COMPOSE[@]}" ps --status running --services | grep -qx watchlist-checker
     echo "ALL SERVICES RUNNING"
     curl -fsS --max-time 10 http://127.0.0.1:8010/api/readiness
     echo
@@ -67,6 +68,6 @@ for i in $(seq 1 15); do
 done
 
 echo "DEPLOY VERIFICATION FAILED"
-docker compose ps
-docker compose logs --tail=200
+"${COMPOSE[@]}" ps
+"${COMPOSE[@]}" logs --tail=200
 exit 1
