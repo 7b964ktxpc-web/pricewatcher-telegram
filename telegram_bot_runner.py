@@ -134,6 +134,12 @@ def run_once(offset: int | None) -> int | None:
 def validate_startup() -> None:
     if not bot.enabled():
         raise SystemExit("Set TELEGRAM_BOT_TOKEN before starting the bot")
+    # Polling and webhook delivery cannot coexist. Remove a stale webhook left by
+    # an earlier deployment so this long-running polling worker can receive updates.
+    try:
+        bot._api("deleteWebhook", {"drop_pending_updates": False})
+    except Exception as exc:
+        print(f"Telegram webhook cleanup warning: {exc}", flush=True)
     result = bot._api("getMe")
     telegram_bot = result.get("result", {})
     username = telegram_bot.get("username") or telegram_bot.get("first_name") or "unknown"
