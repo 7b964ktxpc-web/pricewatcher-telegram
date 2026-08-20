@@ -4,6 +4,7 @@ from typing import Any
 import requests
 
 import telegram_bot as bot
+from search_context import resolve_search_query
 
 
 def _download_telegram_file(file_id: str) -> tuple[bytes, str]:
@@ -55,7 +56,10 @@ def _handle_update(update: dict[str, Any]) -> None:
         elif value:
             bot._remember(chat_id, "user", value)
             if bot._looks_like_search(value):
-                bot._search(chat_id, value)
+                search_query = resolve_search_query(value, bot._context(chat_id), bot._last_results.get(chat_id, []))
+                if search_query != value:
+                    bot.send_message(chat_id, "Поняла 🙂 Уточняю предыдущий поиск и проверяю новые варианты…")
+                bot._search(chat_id, search_query)
             else:
                 try:
                     reply = bot.ai_chat(value, bot._context(chat_id))
