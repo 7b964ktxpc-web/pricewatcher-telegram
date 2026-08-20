@@ -9,6 +9,7 @@ import requests
 
 from agent_router import build_plan
 from conversation_agent import chat as ai_chat
+from live_search_agent import search_live
 from telegram_photo_search import describe_image
 from watchlist_store import add as add_watch, init_db as init_watchlist_db, list_for_chat, remove as remove_watch
 
@@ -59,6 +60,12 @@ def send_message(chat_id: int, text: str, reply_markup: dict[str, Any] | None = 
         payload["reply_markup"] = reply_markup
     _api("sendMessage", payload)
 
+def _typing(chat_id: int) -> None:
+    try:
+        _api("sendChatAction", {"chat_id": chat_id, "action": "typing"})
+    except Exception:
+        pass
+
 def menu_keyboard() -> dict[str, Any]:
     return {"inline_keyboard": [[{"text": "🔎 Найти товар", "callback_data": "search"}, {"text": "📸 По фото", "callback_data": "photo"}], [{"text": "🔎 Найти дешевле", "callback_data": "cheaper_menu"}, {"text": "🔔 Мои товары", "callback_data": "watchlist"}], [{"text": "💬 Просто поговорить", "callback_data": "chat"}, {"text": "ℹ️ Помощь", "callback_data": "help"}]]}
 
@@ -108,35 +115,32 @@ def _extract_search_items(data: dict[str, Any]) -> list[dict[str, Any]]:
     return [dict(item) for item in items if isinstance(item, dict)] if isinstance(items, list) else []
 
 def _search(chat_id: int, query: str) -> None:
+    _typing(chat_id)
     try:
-        build_plan(query)
-    except Exception:
-        pass
-    endpoints = [("/api/agent/search", {"q": query, "limit": 8}), ("/api/child-search", {"q": query, "limit": 8})]
-    data: dict[str, Any] | None = None
-    errors: list[str] = []
-    for path, params in endpoints:
-        try:
-            response = requests.get(f"{PARSER_BASE_URL}{path}", params=params, timeout=TIMEOUT)
-            response.raise_for_status()
-            candidate = response.json()
-            if _extract_search_items(candidate) or candidate.get("ready") is True:
-                data = candidate
-                break
-            errors.append(f"{path}: invalid response")
-        except Exception as exc:
-            errors.append(f"{path}: {exc}")
-    if data is None:
-        print(f"Telegram search unavailable: {'; '.join(errors)}", flush=True)
-        send_message(chat_id, "😔 <b>Поиск сейчас недоступен</b>\n\nПопробуй ещё раз немного позже.", menu_keyboard())
+        result = search_live(query, limit=8)
+    except Exception as exc:
+        print(f"Telegram live search error: {exc}", flush=True)
+        send_message(chat_id, "Похоже, поиск сейчас капризничает 😔\n\nДавай попробуем ещё раз через минутку.", menu_keyboard())
         return
-    items = _extract_search_items(data)
+
+    items = _extract_search_items(result)
     if not items:
-        send_message(chat_id, "🔎 <b>Подходящих вариантов не найдено</b>\n\nПопробуй изменить бюджет, размер или описание товара.", menu_keyboard())
+        errors = result.get("errors") or []
+        if errors:
+            print(f"Telegram live search returned no results: {'; '.join(errors)}", flush=True)
+        send_message(chat_id, "Я посмотрела, но подходящего варианта пока не нашла 😔\n\nМожем попробовать другой бюджет, размер или просто сформулировать запрос чуть иначе.", menu_keyboard())
         return
+
     _last_results[chat_id] = items[:8]
     _remember(chat_id, "assistant", f"Нашла варианты по запросу: {query}")
-    send_message(chat_id, f"🎉 <b>Нашла {len(_last_results[chat_id])} вариантов</b>\n\nСначала показываю наиболее подходящие 👇")
+    count = len(_last_results[chat_id])
+    if count == 1:
+        intro = "Нашла один вариант, который хорошо подходит 👇"
+    elif count < 5:
+        intro = f"Нашла {count} подходящих вариантов. Давай посмотрим 👇"
+    else:
+        intro = f"Нашла {count} вариантов. Сначала покажу самые подходящие 👇"
+    send_message(chat_id, f"{intro}\n\nЯ постаралась подобрать варианты ближе к твоему запросу.")
     for index, item in enumerate(_last_results[chat_id], 1):
         title = str(item.get("title") or "Товар")
         price = item.get("lowest_price", item.get("price"))
@@ -147,7 +151,7 @@ def _search(chat_id: int, query: str) -> None:
         if item.get("offer_count"):
             text += f"\n📊 Предложений: {item['offer_count']}"
         send_message(chat_id, text, deal_keyboard(item, index - 1))
-    send_message(chat_id, "Можно купить, поискать дешевле или включить 🔔 отслеживание.", menu_keyboard())
+    send_message(chat_id, "Если хочешь, могу поискать дешевле, проверить конкретный вариант или поставить его на отслеживание 🔔", menu_keyboard())
 
 def _rerun_deal_action(chat_id: int, index: int, mode: str) -> None:
     results = _last_results.get(chat_id, [])
@@ -155,20 +159,21 @@ def _rerun_deal_action(chat_id: int, index: int, mode: str) -> None:
         send_message(chat_id, "Этот результат уже устарел. Давай сделаем новый поиск.", menu_keyboard())
         return
     title = str(results[index].get("title") or "товар")
-    send_message(chat_id, "🔎 <b>Ищу дешевле…</b>" if mode == "cheaper" else "🔄 <b>Проверяю цену…</b>")
+    _typing(chat_id)
+    send_message(chat_id, "Хорошо, сейчас посмотрю варианты подешевле 🔎" if mode == "cheaper" else "Сейчас перепроверю цену 🔄")
     _search(chat_id, f"найди дешевле: {title}" if mode == "cheaper" else title)
 
 def _handle_callback(chat_id: int, data: str) -> None:
     if data in {"home", "start"}:
         send_message(chat_id, WELCOME_TEXT, menu_keyboard())
     elif data == "search":
-        send_message(chat_id, "🔎 <b>Что ищем?</b>\n\nНапиши товар, размер/возраст и бюджет.", back_keyboard())
+        send_message(chat_id, "Конечно 🙂 Что ищем?\n\nМожешь написать товар, возраст/размер и примерный бюджет — я разберусь.", back_keyboard())
     elif data == "photo":
-        send_message(chat_id, "📸 <b>Пришли фото товара</b>\n\nЯ попробую определить его и найти похожие варианты.", back_keyboard())
+        send_message(chat_id, "Давай по фото 📸\n\nПришли фотографию товара, а я попробую понять, что это и найти похожие варианты.", back_keyboard())
     elif data == "chat":
-        send_message(chat_id, "💬 <b>Я слушаю</b>\n\nПиши вопрос обычными словами.", back_keyboard())
+        send_message(chat_id, "Конечно 🙂 Я слушаю. Рассказывай, что нужно.", back_keyboard())
     elif data == "cheaper_menu":
-        send_message(chat_id, "🔎 <b>Найти дешевле</b>\n\nНапиши товар, который хочешь купить.", back_keyboard())
+        send_message(chat_id, "Давай попробуем найти дешевле 🔎\n\nНапиши название товара или пришли ссылку.", back_keyboard())
     elif data == "watchlist":
         _show_watchlist(chat_id)
     elif data == "help":
@@ -182,14 +187,14 @@ def _handle_callback(chat_id: int, data: str) -> None:
         results = _last_results.get(chat_id, [])
         if 0 <= index < len(results):
             add_watch(chat_id, results[index])
-            send_message(chat_id, "🔔 <b>Готово!</b>\n\nЯ буду следить за ценой этого товара.", menu_keyboard())
+            send_message(chat_id, "Готово ❤️\n\nБуду следить за этим товаром и сообщу, если цена заметно снизится.", menu_keyboard())
         else:
             send_message(chat_id, "Этот результат уже устарел. Сделай новый поиск.", menu_keyboard())
     elif data.startswith("unwatch:"):
         key = data.split(":", 1)[1]
-        send_message(chat_id, "❌ Товар убран из отслеживания." if remove_watch(chat_id, key) else "Этот товар уже не отслеживается.", menu_keyboard())
+        send_message(chat_id, "Убрала товар из отслеживания." if remove_watch(chat_id, key) else "Этот товар уже не отслеживается.", menu_keyboard())
     else:
-        send_message(chat_id, "Не поняла действие. Открой главное меню и попробуй ещё раз.", menu_keyboard())
+        send_message(chat_id, "Не совсем поняла действие 🙂 Открой главное меню и попробуй ещё раз.", menu_keyboard())
 
 def _looks_like_search(text: str) -> bool:
     return bool(re.search(r"найди|поищи|подбери|купить|нужн|товар|дешевле|скидк|цена|₽|руб|размер|лет|год|мальчик|девочк", text, re.I))
