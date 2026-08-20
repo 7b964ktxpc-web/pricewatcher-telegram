@@ -24,7 +24,6 @@ class QwenAgent:
 
     def __init__(self, space: str = SPACE):
         self.space = space
-        # gradio_client uses hf_token for Hugging Face authentication.
         self.client = Client(space, hf_token=HF_TOKEN, verbose=False)
         self.api = self.client.view_api(all_endpoints=True, print_info=False)
 
@@ -119,17 +118,37 @@ def _fallback_plan(user_request: str) -> dict[str, Any]:
     if age_match:
         age = int(age_match.group(1))
     gender = "мальчик" if "мальчик" in lower else "девочка" if "девочка" in lower else None
+    category = None
+    category_map = {
+        "футбол": "футболка",
+        "футболк": "футболка",
+        "джинс": "джинсы",
+        "куртк": "куртка",
+        "кроссов": "кроссовки",
+        "плать": "платье",
+        "обув": "обувь",
+        "штаны": "штаны",
+        "брюк": "брюки",
+        "игруш": "игрушки",
+        "рюкзак": "рюкзак",
+    }
+    for needle, value in category_map.items():
+        if needle in lower:
+            category = value
+            break
+    keywords = [category] if category else []
     return {
         "query": user_request.strip(),
-        "category": None,
+        "category": category,
         "age": age,
         "gender": gender,
         "size": None,
         "max_price": price,
-        "keywords": [],
+        "keywords": keywords,
         "marketplaces": ["wildberries", "ozon", "yandex_market", "simaland", "detmir", "akusherstvo", "korablik"],
         "limit": 20,
-        "ai_parse_error": True,
+        "ai_parse_error": False,
+        "plan_source": "local-fallback",
     }
 
 
@@ -166,6 +185,7 @@ def plan_search(user_request: str) -> dict[str, Any]:
         obj["marketplaces"] = markets or sorted(allowed)
         if not isinstance(obj.get("keywords"), list):
             obj["keywords"] = []
+        obj.setdefault("ai_parse_error", False)
         _cache[key] = (now, obj)
         return dict(obj)
     except Exception as exc:
