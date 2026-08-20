@@ -33,8 +33,12 @@ def _handle_photo(chat_id: int, photos: list[dict[str, Any]], caption: str = "")
         if not query:
             raise RuntimeError("vision returned an empty query")
         bot._remember(chat_id, "user", f"Фото: {query}")
-        bot.send_message(chat_id, f"📸 <b>Поняла, что ищем:</b> {query}\n\n🔎 Ищу подходящие варианты…")
-        bot._search(chat_id, query)
+        search_query = resolve_search_query(query, bot._context(chat_id), bot._last_results.get(chat_id, []))
+        if search_query != query:
+            bot.send_message(chat_id, "Поняла 🙂 Уточняю предыдущий поиск по фото и проверяю новые варианты…")
+        else:
+            bot.send_message(chat_id, f"📸 <b>Поняла, что ищем:</b> {query}\n\n🔎 Ищу подходящие варианты…")
+        bot._search(chat_id, search_query)
     except Exception as exc:
         print(f"Telegram photo search error: {exc}", flush=True)
         bot.send_message(chat_id, "📸 <b>Не смогла разобрать фото.</b>\n\nПопробуй другое фото или напиши название товара текстом.", bot.menu_keyboard())
