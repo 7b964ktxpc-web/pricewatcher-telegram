@@ -42,18 +42,9 @@ jobs:
               "https://api.github.com/repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/statuses" \
               | jq -r '[.[] | select(.context == "ci")] | .[0].state // ""')"
             case "$state" in
-              success)
-                echo "CI status is green for $GITHUB_SHA"
-                exit 0
-                ;;
-              failure|error)
-                echo "CI status is $state for $GITHUB_SHA"
-                exit 1
-                ;;
-              *)
-                echo "Waiting for CI status... $i/45"
-                sleep 2
-                ;;
+              success) echo "CI status is green for $GITHUB_SHA"; exit 0 ;;
+              failure|error) echo "CI status is $state for $GITHUB_SHA"; exit 1 ;;
+              *) echo "Waiting for CI status... $i/45"; sleep 2 ;;
             esac
           done
           echo "CI status was not published for $GITHUB_SHA"
@@ -81,7 +72,6 @@ jobs:
           install -m 700 -d "$HOME/.ssh"
           printf '%s\n' "$TIMEWEB_SSH_KEY" > "$HOME/.ssh/id_ed25519"
           chmod 600 "$HOME/.ssh/id_ed25519"
-          echo "Checking Timeweb SSH endpoint"
           timeout 10 bash -c 'cat < /dev/null > /dev/tcp/$TIMEWEB_HOST/22'
           echo "Timeweb SSH port reachable"
 
@@ -107,7 +97,6 @@ jobs:
           KORABLIK_FEED_URL: ${{ secrets.KORABLIK_FEED_URL }}
         run: |
           set -euo pipefail
-
           b64() { printf '%s' "$1" | base64 -w0; }
           export TOKEN_B64="$(b64 "$TELEGRAM_BOT_TOKEN")"
           export ADMIN_TOKEN_B64="$(b64 "$ADMIN_BOT_TOKEN")"
@@ -128,107 +117,90 @@ jobs:
           export KORABLIK_FEED_B64="$(b64 "$KORABLIK_FEED_URL")"
           EXPECTED_SHA="$GITHUB_SHA"
 
-          for attempt in 1 2 3; do
-            echo "REMOTE DEPLOY ATTEMPT $attempt/3"
-            if ssh -i "$HOME/.ssh/id_ed25519" -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=10 "$TIMEWEB_USER@$TIMEWEB_HOST" \
-              "APP_DIR='$TIMEWEB_APP_DIR' EXPECTED_SHA='$EXPECTED_SHA' TOKEN_B64='$TOKEN_B64' ADMIN_TOKEN_B64='$ADMIN_TOKEN_B64' ADMIN_IDS_B64='$ADMIN_IDS_B64' DEEPSEEK_B64='$DEEPSEEK_B64' HF_B64='$HF_B64' GROQ_B64='$GROQ_B64' GEMINI_B64='$GEMINI_B64' WB_API_B64='$WB_API_B64' YM_API_B64='$YM_API_B64' YM_BUSINESS_B64='$YM_BUSINESS_B64' WB_FEED_B64='$WB_FEED_B64' OZON_FEED_B64='$OZON_FEED_B64' YM_FEED_B64='$YM_FEED_B64' SIMALAND_FEED_B64='$SIMALAND_FEED_B64' DETMIR_FEED_B64='$DETMIR_FEED_B64' AKUSHERSTVO_FEED_B64='$AKUSHERSTVO_FEED_B64' KORABLIK_FEED_B64='$KORABLIK_FEED_B64' bash -se" <<'REMOTE'
-            set -euo pipefail
-
-            mkdir -p "$APP_DIR"
-            cd "$APP_DIR"
-            if [ -d .git ]; then
-              git fetch origin main
-              git checkout main
-              git reset --hard origin/main
-            else
-              git clone --branch main https://github.com/7b964ktxpc-web/pricewatcher-telegram.git .
-            fi
-
-            DEPLOYED_SHA="$(git rev-parse HEAD)"
-            test "$DEPLOYED_SHA" = "$EXPECTED_SHA"
-            echo "DEPLOYED SHA: $DEPLOYED_SHA"
-
-            : > .env.telegram
-            write_secret() {
-              key="$1"
-              value="$2"
-              if [ -n "$value" ]; then
-                printf '%s=' "$key" >> .env.telegram
-                printf '%s' "$value" | base64 -d >> .env.telegram
-                printf '\n' >> .env.telegram
-              fi
-            }
-
-            write_secret TELEGRAM_BOT_TOKEN "$TOKEN_B64"
-            write_secret ADMIN_BOT_TOKEN "$ADMIN_TOKEN_B64"
-            write_secret ADMIN_USER_IDS "$ADMIN_IDS_B64"
-            write_secret DEEPSEEK_API_KEY "$DEEPSEEK_B64"
-            write_secret HF_TOKEN "$HF_B64"
-            write_secret GROQ_API_KEY "$GROQ_B64"
-            write_secret GEMINI_API_KEY "$GEMINI_B64"
-            write_secret WB_API_TOKEN "$WB_API_B64"
-            write_secret YANDEX_MARKET_API_KEY "$YM_API_B64"
-            write_secret YANDEX_MARKET_BUSINESS_ID "$YM_BUSINESS_B64"
-            write_secret WB_FEED_URL "$WB_FEED_B64"
-            write_secret OZON_FEED_URL "$OZON_FEED_B64"
-            write_secret YANDEX_MARKET_FEED_URL "$YM_FEED_B64"
-            write_secret SIMALAND_FEED_URL "$SIMALAND_FEED_B64"
-            write_secret DETMIR_FEED_URL "$DETMIR_FEED_B64"
-            write_secret AKUSHERSTVO_FEED_URL "$AKUSHERSTVO_FEED_B64"
-            write_secret KORABLIK_FEED_URL "$KORABLIK_FEED_B64"
-            chmod 600 .env.telegram
-
-            export TELEGRAM_BOT_TOKEN="$(printf '%s' "$TOKEN_B64" | base64 -d)"
-            export ADMIN_BOT_TOKEN="$(printf '%s' "$ADMIN_TOKEN_B64" | base64 -d)"
-            export ADMIN_USER_IDS="$(printf '%s' "$ADMIN_IDS_B64" | base64 -d)"
-            export DEEPSEEK_API_KEY="$(printf '%s' "$DEEPSEEK_B64" | base64 -d)"
-            export HF_TOKEN="$(printf '%s' "$HF_B64" | base64 -d)"
-            export GROQ_API_KEY="$(printf '%s' "$GROQ_B64" | base64 -d)"
-            export GEMINI_API_KEY="$(printf '%s' "$GEMINI_B64" | base64 -d)"
-            export WB_API_TOKEN="$(printf '%s' "$WB_API_B64" | base64 -d)"
-            export YANDEX_MARKET_API_KEY="$(printf '%s' "$YM_API_B64" | base64 -d)"
-            export YANDEX_MARKET_BUSINESS_ID="$(printf '%s' "$YM_BUSINESS_B64" | base64 -d)"
-            export WB_FEED_URL="$(printf '%s' "$WB_FEED_B64" | base64 -d)"
-            export OZON_FEED_URL="$(printf '%s' "$OZON_FEED_B64" | base64 -d)"
-            export YANDEX_MARKET_FEED_URL="$(printf '%s' "$YM_FEED_B64" | base64 -d)"
-            export SIMALAND_FEED_URL="$(printf '%s' "$SIMALAND_FEED_B64" | base64 -d)"
-            export DETMIR_FEED_URL="$(printf '%s' "$DETMIR_FEED_B64" | base64 -d)"
-            export AKUSHERSTVO_FEED_URL="$(printf '%s' "$AKUSHERSTVO_FEED_B64" | base64 -d)"
-            export KORABLIK_FEED_URL="$(printf '%s' "$KORABLIK_FEED_B64" | base64 -d)"
-
-            docker compose --env-file .env.telegram config >/dev/null
-            docker compose --env-file .env.telegram up -d --build --remove-orphans
-            docker compose ps
-
-            for i in $(seq 1 15); do
-              if curl -fsS --max-time 5 http://127.0.0.1:8010/health >/dev/null; then
-                echo "HEALTH OK"
-                docker compose ps --status running --services | grep -qx marketplace-parser
-                docker compose ps --status running --services | grep -qx telegram-bot
-                docker compose ps --status running --services | grep -qx admin-bot
-                docker compose ps --status running --services | grep -qx watchlist-checker
-                echo "ALL SERVICES RUNNING"
-                curl -fsS --max-time 10 http://127.0.0.1:8010/api/readiness
-                echo
-                exit 0
-              fi
-              echo "Waiting for application... $i/15"
-              sleep 2
-            done
-
-            echo "DEPLOY VERIFICATION FAILED"
-            docker compose ps
-            docker compose logs --tail=200
-            exit 1
-            REMOTE
-            then
-              exit 0
-            fi
-            echo "Remote deployment attempt $attempt failed"
-            sleep 5
-          done
-          echo "All remote deployment attempts failed"
-          exit 1
+          ssh -i "$HOME/.ssh/id_ed25519" -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=10 \
+            "$TIMEWEB_USER@$TIMEWEB_HOST" \
+            "APP_DIR='$TIMEWEB_APP_DIR' EXPECTED_SHA='$EXPECTED_SHA' TOKEN_B64='$TOKEN_B64' ADMIN_TOKEN_B64='$ADMIN_TOKEN_B64' ADMIN_IDS_B64='$ADMIN_IDS_B64' DEEPSEEK_B64='$DEEPSEEK_B64' HF_B64='$HF_B64' GROQ_B64='$GROQ_B64' GEMINI_B64='$GEMINI_B64' WB_API_B64='$WB_API_B64' YM_API_B64='$YM_API_B64' YM_BUSINESS_B64='$YM_BUSINESS_B64' WB_FEED_B64='$WB_FEED_B64' OZON_FEED_B64='$OZON_FEED_B64' YM_FEED_B64='$YM_FEED_B64' SIMALAND_FEED_B64='$SIMALAND_FEED_B64' DETMIR_FEED_B64='$DETMIR_FEED_B64' AKUSHERSTVO_FEED_B64='$AKUSHERSTVO_FEED_B64' KORABLIK_FEED_B64='$KORABLIK_FEED_B64' bash -se" <<'REMOTE'
+set -euo pipefail
+mkdir -p "$APP_DIR"
+cd "$APP_DIR"
+if [ -d .git ]; then
+  git fetch origin main
+  git checkout main
+  git reset --hard origin/main
+else
+  git clone --branch main https://github.com/7b964ktxpc-web/pricewatcher-telegram.git .
+fi
+DEPLOYED_SHA="$(git rev-parse HEAD)"
+test "$DEPLOYED_SHA" = "$EXPECTED_SHA"
+echo "DEPLOYED SHA: $DEPLOYED_SHA"
+: > .env.telegram
+write_secret() {
+  key="$1"
+  value="$2"
+  if [ -n "$value" ]; then
+    printf '%s=' "$key" >> .env.telegram
+    printf '%s' "$value" | base64 -d >> .env.telegram
+    printf '\n' >> .env.telegram
+  fi
+}
+write_secret TELEGRAM_BOT_TOKEN "$TOKEN_B64"
+write_secret ADMIN_BOT_TOKEN "$ADMIN_TOKEN_B64"
+write_secret ADMIN_USER_IDS "$ADMIN_IDS_B64"
+write_secret DEEPSEEK_API_KEY "$DEEPSEEK_B64"
+write_secret HF_TOKEN "$HF_B64"
+write_secret GROQ_API_KEY "$GROQ_B64"
+write_secret GEMINI_API_KEY "$GEMINI_B64"
+write_secret WB_API_TOKEN "$WB_API_B64"
+write_secret YANDEX_MARKET_API_KEY "$YM_API_B64"
+write_secret YANDEX_MARKET_BUSINESS_ID "$YM_BUSINESS_B64"
+write_secret WB_FEED_URL "$WB_FEED_B64"
+write_secret OZON_FEED_URL "$OZON_FEED_B64"
+write_secret YANDEX_MARKET_FEED_URL "$YM_FEED_B64"
+write_secret SIMALAND_FEED_URL "$SIMALAND_FEED_B64"
+write_secret DETMIR_FEED_URL "$DETMIR_FEED_B64"
+write_secret AKUSHERSTVO_FEED_URL "$AKUSHERSTVO_FEED_B64"
+write_secret KORABLIK_FEED_URL "$KORABLIK_FEED_B64"
+chmod 600 .env.telegram
+export TELEGRAM_BOT_TOKEN="$(printf '%s' "$TOKEN_B64" | base64 -d)"
+export ADMIN_BOT_TOKEN="$(printf '%s' "$ADMIN_TOKEN_B64" | base64 -d)"
+export ADMIN_USER_IDS="$(printf '%s' "$ADMIN_IDS_B64" | base64 -d)"
+export DEEPSEEK_API_KEY="$(printf '%s' "$DEEPSEEK_B64" | base64 -d)"
+export HF_TOKEN="$(printf '%s' "$HF_B64" | base64 -d)"
+export GROQ_API_KEY="$(printf '%s' "$GROQ_B64" | base64 -d)"
+export GEMINI_API_KEY="$(printf '%s' "$GEMINI_B64" | base64 -d)"
+export WB_API_TOKEN="$(printf '%s' "$WB_API_B64" | base64 -d)"
+export YANDEX_MARKET_API_KEY="$(printf '%s' "$YM_API_B64" | base64 -d)"
+export YANDEX_MARKET_BUSINESS_ID="$(printf '%s' "$YM_BUSINESS_B64" | base64 -d)"
+export WB_FEED_URL="$(printf '%s' "$WB_FEED_B64" | base64 -d)"
+export OZON_FEED_URL="$(printf '%s' "$OZON_FEED_B64" | base64 -d)"
+export YANDEX_MARKET_FEED_URL="$(printf '%s' "$YM_FEED_B64" | base64 -d)"
+export SIMALAND_FEED_URL="$(printf '%s' "$SIMALAND_FEED_B64" | base64 -d)"
+export DETMIR_FEED_URL="$(printf '%s' "$DETMIR_FEED_B64" | base64 -d)"
+export AKUSHERSTVO_FEED_URL="$(printf '%s' "$AKUSHERSTVO_FEED_B64" | base64 -d)"
+export KORABLIK_FEED_URL="$(printf '%s' "$KORABLIK_FEED_B64" | base64 -d)"
+docker compose --env-file .env.telegram config >/dev/null
+docker compose --env-file .env.telegram up -d --build --remove-orphans
+docker compose ps
+for i in $(seq 1 15); do
+  if curl -fsS --max-time 5 http://127.0.0.1:8010/health >/dev/null; then
+    echo "HEALTH OK"
+    docker compose ps --status running --services | grep -qx marketplace-parser
+    docker compose ps --status running --services | grep -qx telegram-bot
+    docker compose ps --status running --services | grep -qx admin-bot
+    docker compose ps --status running --services | grep -qx watchlist-checker
+    echo "ALL SERVICES RUNNING"
+    curl -fsS --max-time 10 http://127.0.0.1:8010/api/readiness
+    echo
+    exit 0
+  fi
+  echo "Waiting for application... $i/15"
+  sleep 2
+done
+echo "DEPLOY VERIFICATION FAILED"
+docker compose ps
+docker compose logs --tail=200
+exit 1
+REMOTE
 
       - name: Publish production deployment status
         if: always()
@@ -247,10 +219,5 @@ jobs:
             -H "Accept: application/vnd.github+json" \
             -H "X-GitHub-Api-Version: 2022-11-28" \
             "https://api.github.com/repos/$GITHUB_REPOSITORY/statuses/$DEPLOY_SHA" \
-            -d "$(jq -n \
-              --arg state "$state" \
-              --arg context "production-deploy" \
-              --arg target_url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
-              --arg description "$description" \
-              '{state:$state, context:$context, target_url:$target_url, description:$description}')" >/dev/null
+            -d "$(jq -n --arg state "$state" --arg context "production-deploy" --arg target_url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" --arg description "$description" '{state:$state, context:$context, target_url:$target_url, description:$description}')" >/dev/null
           echo "Published production commit status: $state"
