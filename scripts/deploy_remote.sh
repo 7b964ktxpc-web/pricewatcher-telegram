@@ -63,8 +63,20 @@ for i in $(seq 1 15); do
     done
     if [ "$failed" -eq 0 ]; then
       echo "ALL SERVICES RUNNING"
-      curl -fsS --max-time 10 http://127.0.0.1:8010/api/readiness
-      echo
+      readiness="$(curl -fsS --max-time 10 http://127.0.0.1:8010/api/readiness)"
+      printf '%s\n' "$readiness"
+
+      echo "RUNNING SEARCH SMOKE TEST"
+      search_response="$(curl -fsS --max-time 45 --get \
+        --data-urlencode 'q=футболка мальчик 5 лет до 1000 рублей' \
+        --data-urlencode 'limit=3' \
+        http://127.0.0.1:8010/api/agent/search)"
+      printf '%s\n' "$search_response"
+      if ! printf '%s' "$search_response" | grep -Eq '"ready"[[:space:]]*:[[:space:]]*true'; then
+        echo "SEARCH SMOKE TEST FAILED: /api/agent/search did not return ready=true"
+        exit 1
+      fi
+      echo "SEARCH SMOKE TEST OK"
       exit 0
     fi
     echo "Service verification failed; collecting recent logs"
