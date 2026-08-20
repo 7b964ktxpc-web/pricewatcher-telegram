@@ -27,13 +27,25 @@ jobs:
             conclusion="$(gh run list --repo "$GITHUB_REPOSITORY" --workflow ci.yml --commit "$GITHUB_SHA" --limit 1 --json status,conclusion --jq '.[0] | if . == null then "missing" elif .status != "completed" then "running" else .conclusion end')"
             echo "CI state: $conclusion ($i/60)"
             case "$conclusion" in
-              success) exit 0 ;;
+              success) break ;;
               failure|cancelled|timed_out|action_required) echo "CI did not pass"; exit 1 ;;
             esac
             sleep 10
           done
-          echo "Timed out waiting for CI"
-          exit 1
+          if [ "$conclusion" != "success" ]; then
+            echo "Timed out waiting for CI"
+            exit 1
+          fi
+
+      - name: Ensure main did not move
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          current_sha="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq '.object.sha')"
+          echo "Trigger SHA: $GITHUB_SHA"
+          echo "Current main SHA: $current_sha"
+          test "$current_sha" = "$GITHUB_SHA"
 
       - name: Dispatch production deployment
         env:
