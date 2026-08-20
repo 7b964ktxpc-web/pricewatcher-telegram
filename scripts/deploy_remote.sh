@@ -27,23 +27,20 @@ write_secret() {
   fi
 }
 
-write_secret TELEGRAM_BOT_TOKEN "$TOKEN_B64"
-write_secret ADMIN_BOT_TOKEN "$ADMIN_TOKEN_B64"
-write_secret ADMIN_USER_IDS "$ADMIN_IDS_B64"
-write_secret DEEPSEEK_API_KEY "$DEEPSEEK_B64"
-write_secret HF_TOKEN "$HF_B64"
-write_secret GROQ_API_KEY "$GROQ_B64"
-write_secret GEMINI_API_KEY "$GEMINI_B64"
-write_secret WB_API_TOKEN "$WB_API_B64"
-write_secret YANDEX_MARKET_API_KEY "$YM_API_B64"
-write_secret YANDEX_MARKET_BUSINESS_ID "$YM_BUSINESS_B64"
-write_secret WB_FEED_URL "$WB_FEED_B64"
-write_secret OZON_FEED_URL "$OZON_FEED_B64"
-write_secret YANDEX_MARKET_FEED_URL "$YM_FEED_B64"
-write_secret SIMALAND_FEED_URL "$SIMALAND_FEED_B64"
-write_secret DETMIR_FEED_URL "$DETMIR_FEED_B64"
-write_secret AKUSHERSTVO_FEED_URL "$AKUSHERSTVO_FEED_B64"
-write_secret KORABLIK_FEED_URL "$KORABLIK_FEED_B64"
+write_secret TELEGRAM_BOT_TOKEN "${TOKEN_B64:-}"
+write_secret ADMIN_BOT_TOKEN "${ADMIN_TOKEN_B64:-}"
+write_secret ADMIN_USER_IDS "${ADMIN_IDS_B64:-}"
+write_secret DEEPSEEK_API_KEY "${DEEPSEEK_B64:-}"
+write_secret HF_TOKEN "${HF_B64:-}"
+write_secret GROQ_API_KEY "${GROQ_B64:-}"
+write_secret GEMINI_API_KEY "${GEMINI_B64:-}"
+write_secret WB_API_TOKEN "${WB_API_B64:-}"
+write_secret WB_FEED_URL "${WB_FEED_B64:-}"
+write_secret OZON_FEED_URL "${OZON_FEED_B64:-}"
+write_secret SIMALAND_FEED_URL "${SIMALAND_FEED_B64:-}"
+write_secret DETMIR_FEED_URL "${DETMIR_FEED_B64:-}"
+write_secret AKUSHERSTVO_FEED_URL "${AKUSHERSTVO_FEED_B64:-}"
+write_secret KORABLIK_FEED_URL "${KORABLIK_FEED_B64:-}"
 
 chmod 600 .env.telegram
 COMPOSE=(docker compose --env-file .env.telegram)
@@ -73,14 +70,11 @@ for i in $(seq 1 15); do
         http://127.0.0.1:8010/api/agent/search)"
       printf '%s\n' "$search_response"
 
-      # The search endpoint is healthy when it returns a valid response and
-      # the AI planning stage did not fail. Catalogs/feeds are optional, so
-      # zero priced offers or blocked sources must not make deployment fail.
       search_state="$(printf '%s' "$search_response" | python -c '
 import json, sys
 try:
     d=json.load(sys.stdin)
-except Exception as exc:
+except Exception:
     print("invalid_json")
     raise SystemExit(0)
 if not isinstance(d, dict):
