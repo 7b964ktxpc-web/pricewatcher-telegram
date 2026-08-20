@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any
 
@@ -79,14 +80,13 @@ def _run_queries(queries: list[str], limit: int) -> tuple[list[dict[str, Any]], 
 
 
 def _fallback_query(original_query: str, plan: dict[str, Any]) -> str | None:
-    """Relax only the explicit price ceiling; preserve every product constraint."""
+    """Relax only the explicit price ceiling; preserve every other product constraint."""
     price_fields = ("max_price", "budget", "price")
     has_price = any(plan.get(field) not in (None, "", [], {}) for field in price_fields)
     if not has_price:
         return None
 
     preserved_fields = (
-        "query",
         "category",
         "age",
         "gender",
@@ -106,7 +106,14 @@ def _fallback_query(original_query: str, plan: dict[str, Any]) -> str | None:
             terms.append(str(value).strip())
 
     query = " ".join(dict.fromkeys(term for term in terms if term))
-    return query or original_query.strip() or None
+    if query:
+        return query
+
+    # Last-resort fallback: remove common explicit price expressions from the
+    # original query rather than silently retaining the old price ceiling.
+    cleaned = re.sub(r"(?:до|не\s*дороже|дешевле|бюджет(?:ом)?\s*до)\s*\d[\d\s.,]*", " ", original_query, flags=re.IGNORECASE)
+    cleaned = re.sub(r"\s+", " ", cleaned).strip(" ,")
+    return cleaned or None
 
 
 def search_live(original_query: str, limit: int = 8) -> dict[str, Any]:
