@@ -54,14 +54,25 @@ COMPOSE=(docker compose --env-file .env.telegram)
 for i in $(seq 1 15); do
   if curl -fsS --max-time 5 http://127.0.0.1:8010/health >/dev/null; then
     echo "HEALTH OK"
-    "${COMPOSE[@]}" ps --status running --services | grep -qx marketplace-parser
-    "${COMPOSE[@]}" ps --status running --services | grep -qx telegram-bot
-    "${COMPOSE[@]}" ps --status running --services | grep -qx admin-bot
-    "${COMPOSE[@]}" ps --status running --services | grep -qx watchlist-checker
-    echo "ALL SERVICES RUNNING"
-    curl -fsS --max-time 10 http://127.0.0.1:8010/api/readiness
-    echo
-    exit 0
+    failed=0
+    for service in marketplace-parser telegram-bot admin-bot watchlist-checker; do
+      if ! "${COMPOSE[@]}" ps --status running --services | grep -qx "$service"; then
+        echo "SERVICE NOT RUNNING: $service"
+        failed=1
+      fi
+    done
+    if [ "$failed" -eq 0 ]; then
+      echo "ALL SERVICES RUNNING"
+      curl -fsS --max-time 10 http://127.0.0.1:8010/api/readiness
+      echo
+      exit 0
+    fi
+    echo "Service verification failed; collecting recent logs"
+    for service in telegram-bot admin-bot watchlist-checker; do
+      echo "===== $service logs ====="
+      "${COMPOSE[@]}" logs --no-color --tail=80 "$service" || true
+    done
+    exit 1
   fi
   echo "Waiting for application... $i/15"
   sleep 2
@@ -69,5 +80,5 @@ done
 
 echo "DEPLOY VERIFICATION FAILED"
 "${COMPOSE[@]}" ps
-"${COMPOSE[@]}" logs --tail=200
+"${COMPOSE[@]}" logs --no-color --tail=200
 exit 1
