@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any
 
@@ -11,6 +12,7 @@ from agent_router import build_plan, expand_queries
 
 TIMEOUT = float(os.getenv("PARSER_SEARCH_TIMEOUT", os.getenv("TELEGRAM_TIMEOUT", "20")))
 BASE_URL = os.getenv("PARSER_PUBLIC_URL", "http://127.0.0.1:8010").rstrip("/")
+SPARSE_RESULT_THRESHOLD = max(1, int(os.getenv("LIVE_SEARCH_SPARSE_THRESHOLD", "2")))
 
 
 def _items(payload: dict[str, Any]) -> list[dict[str, Any]]:
@@ -78,14 +80,13 @@ def _run_queries(queries: list[str], limit: int) -> tuple[list[dict[str, Any]], 
 
 
 def _fallback_query(original_query: str, plan: dict[str, Any]) -> str | None:
-    """Relax only the explicit price ceiling; preserve every product constraint."""
+    """Relax only the explicit price ceiling; preserve every other product constraint."""
     price_fields = ("max_price", "budget", "price")
     has_price = any(plan.get(field) not in (None, "", [], {}) for field in price_fields)
     if not has_price:
         return None
 
     preserved_fields = (
-        "query",
         "category",
         "age",
         "gender",
@@ -105,30 +106,49 @@ def _fallback_query(original_query: str, plan: dict[str, Any]) -> str | None:
             terms.append(str(value).strip())
 
     query = " ".join(dict.fromkeys(term for term in terms if term))
-    return query or original_query.strip() or None
+    if query:
+        return query
+
+    # Last-resort fallback: remove common explicit price expressions from the
+    # original query rather than silently retaining the old price ceiling.
+    cleaned = re.sub(r"(?:до|не\s*дороже|дешевле|бюджет(?:ом)?\s*до)\s*\d[\d\s.,]*", " ", original_query, flags=re.IGNORECASE)
+    cleaned = re.sub(r"\s+", " ", cleaned).strip(" ,")
+    return cleaned or None
 
 
 def search_live(original_query: str, limit: int = 8) -> dict[str, Any]:
-    """Plan and execute live search, with one bounded price-only fallback when empty."""
+    """Plan and execute live search, with one bounded price-only fallback when sparse."""
     plan = build_plan(original_query)
     queries = expand_queries(plan, original_query)
     results, errors, responses = _run_queries(queries, limit)
+    initial_result_count = len(results)
     fallback_used = False
     fallback_query = None
-    if not results:
+    fallback_reason = None
+
+    if initial_result_count < SPARSE_RESULT_THRESHOLD:
         fallback_query = _fallback_query(original_query, plan)
         if fallback_query and fallback_query not in queries:
             fallback_used = True
+            fallback_reason = "empty" if initial_result_count == 0 else "sparse"
             fallback_results, fallback_errors, fallback_responses = _run_queries([fallback_query], limit)
-            results = fallback_results
+            merged: dict[str, dict[str, Any]] = {_key(item): item for item in results if _key(item)}
+            for item in fallback_results:
+                key = _key(item)
+                if key and (key not in merged or _price(item) < _price(merged[key])):
+                    merged[key] = item
+            results = sorted(merged.values(), key=lambda item: (_price(item), str(item.get("title") or "")))[:limit]
             errors.extend(fallback_errors)
             responses += fallback_responses
+
     return {
         "items": results,
         "plan": plan,
         "queries": queries,
+        "initial_result_count": initial_result_count,
         "fallback_query": fallback_query,
         "fallback_used": fallback_used,
+        "fallback_reason": fallback_reason,
         "sources_attempted": len(queries) * 2 + (2 if fallback_used else 0),
         "responses": responses,
         "errors": errors[:8],
