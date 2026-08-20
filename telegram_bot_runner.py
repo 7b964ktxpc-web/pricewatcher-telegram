@@ -6,6 +6,38 @@ import requests
 import telegram_bot as bot
 
 
+def _download_telegram_file(file_id: str) -> tuple[bytes, str]:
+    file_info = bot._api("getFile", {"file_id": file_id}).get("result") or {}
+    file_path = file_info.get("file_path")
+    if not isinstance(file_path, str) or not file_path:
+        raise RuntimeError("Telegram did not return photo file path")
+    response = requests.get(f"https://api.telegram.org/file/bot{bot.BOT_TOKEN}/{file_path}", timeout=bot.TIMEOUT)
+    response.raise_for_status()
+    mime_type = "image/png" if file_path.lower().endswith(".png") else "image/jpeg"
+    return response.content, mime_type
+
+
+def _handle_photo(chat_id: int, photos: list[dict[str, Any]]) -> None:
+    if not photos:
+        return
+    largest = max((photo for photo in photos if isinstance(photo, dict)), key=lambda photo: int(photo.get("file_size") or 0), default=None)
+    if not largest or not largest.get("file_id"):
+        bot.send_message(chat_id, "📸 Не удалось получить фотографию. Попробуй отправить её ещё раз.", bot.menu_keyboard())
+        return
+    try:
+        image_bytes, mime_type = _download_telegram_file(str(largest["file_id"]))
+        description = bot.describe_image(image_bytes, mime_type)
+        query = str(description.get("query") or "").strip()
+        if not query:
+            raise RuntimeError("vision returned an empty query")
+        bot._remember(chat_id, "user", f"Фото: {query}")
+        bot.send_message(chat_id, f"📸 <b>Поняла, что ищем:</b> {query}\n\n🔎 Ищу подходящие варианты…")
+        bot._search(chat_id, query)
+    except Exception as exc:
+        print(f"Telegram photo search error: {exc}", flush=True)
+        bot.send_message(chat_id, "📸 <b>Не смогла разобрать фото.</b>\n\nПопробуй другое фото или напиши название товара текстом.", bot.menu_keyboard())
+
+
 def _handle_update(update: dict[str, Any]) -> None:
     message = update.get("message") or {}
     chat = message.get("chat") or {}
@@ -34,7 +66,7 @@ def _handle_update(update: dict[str, Any]) -> None:
                 except Exception:
                     bot.send_message(chat_id, "💬 Расскажи, какой товар ищем — помогу подобрать.", bot.menu_keyboard())
     elif message.get("photo"):
-        bot.send_message(chat_id, "📸 Фото получено. Попробуй ещё раз с описанием товара, чтобы я точнее нашла варианты.", bot.menu_keyboard())
+        _handle_photo(chat_id, message.get("photo") or [])
 
     callback = update.get("callback_query") or {}
     if callback:
@@ -47,8 +79,7 @@ def _handle_update(update: dict[str, Any]) -> None:
         cb_message = callback.get("message") or {}
         cb_chat = (cb_message.get("chat") or {}).get("id")
         if cb_chat is not None:
-            data = callback.get("data") or ""
-            bot._handle_callback(cb_chat, data)
+            bot._handle_callback(cb_chat, callback.get("data") or "")
 
 
 def run_once(offset: int | None) -> int | None:
