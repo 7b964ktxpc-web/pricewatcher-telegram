@@ -22,17 +22,11 @@ def test_dedupe_prefers_cheaper_items():
 def test_default_search_includes_feed_adapters(monkeypatch):
     calls = []
 
-    def fake_search(query, limit, sources):
-        calls.append(sources[0])
-        return {
-            "query": query,
-            "count": 0,
-            "items": [],
-            "sources": [{"source": sources[0], "status": "not_configured", "items": [], "error": "test"}],
-            "ready": False,
-        }
+    def fake_run_source(source, query, limit):
+        calls.append(source)
+        return {"source": source, "status": "not_configured", "items": [], "error": "test"}
 
-    monkeypatch.setattr("resilient_provider_engine._search_sources", fake_search)
+    monkeypatch.setattr("resilient_provider_engine._run_source", fake_run_source)
     result = search_sources("футболка", 5)
 
     assert "wildberries_feed" in calls
