@@ -1,6 +1,7 @@
 import pytest
 
 from providers import HEALTH, PROVIDERS
+from resilient_provider_engine import search_sources
 
 
 @pytest.fixture(autouse=True)
