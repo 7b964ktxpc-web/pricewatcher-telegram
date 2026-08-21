@@ -38,6 +38,7 @@ services:
 
   telegram-bot:
     build: .
+    network_mode: host
     command: ["python", "telegram_bot_runner.py"]
     restart: unless-stopped
     depends_on:
@@ -55,8 +56,8 @@ services:
       GEMINI_MODEL: ${GEMINI_MODEL:-gemini-2.5-flash}
       VISION_API_URL: ${VISION_API_URL:-https://router.huggingface.co/hf-inference/models/Qwen/Qwen2.5-VL-7B-Instruct}
       VISION_TIMEOUT: ${VISION_TIMEOUT:-45}
-      WATCHLIST_DB_PATH: /app/data/watchlist.sqlite3
-      PARSER_PUBLIC_URL: http://marketplace-parser:8010
+      WATCHLIST_DB_PATH: /opt/marketplace-parser/repo/telegram-data/watchlist.sqlite3
+      PARSER_PUBLIC_URL: http://127.0.0.1:8010
       TELEGRAM_HISTORY_SIZE: "12"
       TELEGRAM_TIMEOUT: "20"
     volumes:
@@ -64,6 +65,7 @@ services:
 
   admin-bot:
     build: .
+    network_mode: host
     command: ["python", "admin_bot_runner.py"]
     restart: unless-stopped
     depends_on:
@@ -72,14 +74,15 @@ services:
     environment:
       ADMIN_BOT_TOKEN: ${ADMIN_BOT_TOKEN:?ADMIN_BOT_TOKEN is required}
       ADMIN_USER_IDS: ${ADMIN_USER_IDS:?ADMIN_USER_IDS is required}
-      WATCHLIST_DB_PATH: /app/data/watchlist.sqlite3
-      PARSER_PUBLIC_URL: http://marketplace-parser:8010
+      WATCHLIST_DB_PATH: /opt/marketplace-parser/repo/telegram-data/watchlist.sqlite3
+      PARSER_PUBLIC_URL: http://127.0.0.1:8010
       ADMIN_BOT_TIMEOUT: ${ADMIN_BOT_TIMEOUT:-15}
     volumes:
       - telegram-data:/app/data
 
   watchlist-checker:
     build: .
+    network_mode: host
     command: ["python", "watchlist_checker.py"]
     restart: unless-stopped
     depends_on:
@@ -89,10 +92,10 @@ services:
         condition: service_started
     environment:
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:?TELEGRAM_BOT_TOKEN is required}
-      WATCHLIST_DB_PATH: /app/data/watchlist.sqlite3
+      WATCHLIST_DB_PATH: /opt/marketplace-parser/repo/telegram-data/watchlist.sqlite3
       WATCHLIST_CHECK_INTERVAL: ${WATCHLIST_CHECK_INTERVAL:-1800}
       WATCHLIST_CHECK_TIMEOUT: ${WATCHLIST_CHECK_TIMEOUT:-20}
-      PARSER_PUBLIC_URL: http://marketplace-parser:8010
+      PARSER_PUBLIC_URL: http://127.0.0.1:8010
     volumes:
       - telegram-data:/app/data
 
