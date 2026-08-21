@@ -38,7 +38,7 @@ write_secret WB_API_TOKEN "${WB_API_B64:-}"
 write_secret WB_FEED_URL "${WB_FEED_B64:-}"
 write_secret OZON_FEED_URL "${OZON_FEED_B64:-}"
 write_secret SIMALAND_FEED_URL "${SIMALAND_FEED_B64:-}"
-write_secret DETMIR_FEED_URL "${DETMIR_FEED_B64:-}"
+write_secret DETMIR_FEED_URL "${DETMIR_B64:-}"
 write_secret AKUSHERSTVO_FEED_URL "${AKUSHERSTVO_FEED_B64:-}"
 write_secret KORABLIK_FEED_URL "${KORABLIK_FEED_B64:-}"
 
@@ -60,6 +60,10 @@ for i in $(seq 1 15); do
     done
     if [ "$failed" -eq 0 ]; then
       echo "ALL SERVICES RUNNING"
+      echo "TELEGRAM RUNTIME DIAGNOSTICS"
+      "${COMPOSE[@]}" logs --no-color --tail=80 telegram-bot || true
+      "${COMPOSE[@]}" exec -T telegram-bot python -c 'import os, requests; d=requests.get("https://api.telegram.org/bot"+os.environ["TELEGRAM_BOT_TOKEN"]+"/getWebhookInfo", timeout=10).json(); r=d.get("result", {}); print({"ok":d.get("ok"),"webhook_url":r.get("url"),"pending_update_count":r.get("pending_update_count"),"last_error_date":r.get("last_error_date"),"last_error_message":r.get("last_error_message")})'
+
       readiness="$(curl -fsS --max-time 10 http://127.0.0.1:8010/api/readiness)"
       printf '%s\n' "$readiness"
 
