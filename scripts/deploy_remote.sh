@@ -38,7 +38,7 @@ write_secret WB_API_TOKEN "${WB_API_B64:-}"
 write_secret WB_FEED_URL "${WB_FEED_B64:-}"
 write_secret OZON_FEED_URL "${OZON_FEED_B64:-}"
 write_secret SIMALAND_FEED_URL "${SIMALAND_FEED_B64:-}"
-write_secret DETMIR_FEED_URL "${DETMIR_B64:-}"
+write_secret DETMIR_FEED_URL "${DETMIR_FEED_B64:-}"
 write_secret AKUSHERSTVO_FEED_URL "${AKUSHERSTVO_FEED_B64:-}"
 write_secret KORABLIK_FEED_URL "${KORABLIK_FEED_B64:-}"
 
