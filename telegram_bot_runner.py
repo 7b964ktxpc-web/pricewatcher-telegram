@@ -124,20 +124,25 @@ def run_once(offset: int | None) -> int | None:
     updates = result.get("result") or []
     next_offset = offset
     for update in updates:
-        _handle_update(update)
         update_id = update.get("update_id")
+        # Advance the offset BEFORE handling the update. Telegram considers an
+        # update acknowledged only when the next getUpdates call uses a higher
+        # offset. If sendMessage succeeds but the HTTP request times out, retrying
+        # the same update can otherwise send the same welcome/search dozens of times.
         if isinstance(update_id, int):
             next_offset = update_id + 1
+        try:
+            _handle_update(update)
+        except Exception as exc:
+            print(f"Telegram update {update_id} handling error: {exc}", flush=True)
     return next_offset
 
 
 def validate_startup() -> None:
     if not bot.enabled():
         raise SystemExit("Set TELEGRAM_BOT_TOKEN before starting the bot")
-    # Polling and webhook delivery cannot coexist. Remove a stale webhook left by
-    # an earlier deployment so this long-running polling worker can receive updates.
     try:
-        bot._api("deleteWebhook", {"drop_pending_updates": False})
+        bot._api("deleteWebhook", {"drop_pending_updates": True})
     except Exception as exc:
         print(f"Telegram webhook cleanup warning: {exc}", flush=True)
     result = bot._api("getMe")
